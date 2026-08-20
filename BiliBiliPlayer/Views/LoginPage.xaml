@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="BiliBiliPlayer.Views.LoginPage"
+             BackgroundColor="#0F1014"
+             Shell.NavBarIsVisible="False">
+    <Grid RowDefinitions="76,*,Auto">
+        <Grid Grid.Row="0"
+              Padding="22,13"
+              ColumnDefinitions="Auto,*,Auto"
+              BackgroundColor="#17191F">
+            <Button Text="←"
+                    Clicked="OnCancelClicked"
+                    WidthRequest="46"
+                    HeightRequest="46"
+                    Padding="0"
+                    FontSize="21"
+                    BackgroundColor="#242730"
+                    TextColor="#ECEEF2"
+                    CornerRadius="13" />
+            <VerticalStackLayout Grid.Column="1"
+                                 Margin="14,0"
+                                 Spacing="1"
+                                 VerticalOptions="Center">
+                <Label Text="登录哔哩哔哩"
+                       TextColor="#F1F2F5"
+                       FontSize="17"
+                       FontAttributes="Bold" />
+                <Label Text="登录由 B 站官方网页完成，本应用不会接触你的密码"
+                       TextColor="#818691"
+                       FontSize="11" />
+            </VerticalStackLayout>
+            <Border Grid.Column="2"
+                    Padding="10,5"
+                    BackgroundColor="#251C24"
+                    StrokeThickness="0"
+                    VerticalOptions="Center">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="9" />
+                </Border.StrokeShape>
+                <Label Text="WebView2 安全会话"
+                       TextColor="#FB7299"
+                       FontSize="10"
+                       FontAttributes="Bold" />
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1"
+              Margin="20,18,20,0">
+            <Border BackgroundColor="White"
+                    Stroke="#2A2D36"
+                    StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="16" />
+                </Border.StrokeShape>
+                <WebView x:Name="LoginWebView"
+                         Source="https://passport.bilibili.com/login"
+                         Navigated="OnWebViewNavigated" />
+            </Border>
+            <Grid x:Name="WebLoadingOverlay"
+                  BackgroundColor="#191B21">
+                <VerticalStackLayout Spacing="13"
+                                     HorizontalOptions="Center"
+                                     VerticalOptions="Center">
+                    <ActivityIndicator IsRunning="True"
+                                       Color="#FB7299"
+                                       WidthRequest="32"
+                                       HeightRequest="32" />
+                    <Label Text="正在打开 B 站登录页…"
+                           TextColor="#8A8F9B"
+                           FontSize="12" />
+                </VerticalStackLayout>
+            </Grid>
+        </Grid>
+
+        <Grid Grid.Row="2"
+              Padding="22,15,22,20"
+              ColumnDefinitions="*,Auto"
+              ColumnSpacing="18">
+            <VerticalStackLayout Spacing="3"
+                                 VerticalOptions="Center">
+                <Label Text="完成扫码或账号登录后，点击右侧按钮"
+                       TextColor="#C8CAD1"
+                       FontSize="12" />
+                <Label x:Name="StatusLabel"
+                       Text="登录态将由 WebView2 自动保存在本机"
+                       TextColor="#777C88"
+                       FontSize="10" />
+            </VerticalStackLayout>
+            <Button x:Name="CompleteButton"
+                    Grid.Column="1"
+                    Text="我已登录"
+                    Clicked="OnCompleteClicked"
+                    BackgroundColor="#FB7299"
+                    TextColor="White"
+                    CornerRadius="12"
+                    Padding="22,10" />
+        </Grid>
+    </Grid>
+</ContentPage>

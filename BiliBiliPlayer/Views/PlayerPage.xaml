@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="BiliBiliPlayer.Views.PlayerPage"
+             BackgroundColor="#08090C"
+             Shell.NavBarIsVisible="False">
+    <Grid RowDefinitions="64,*">
+        <Grid Grid.Row="0"
+              Padding="18,10"
+              ColumnDefinitions="Auto,*,Auto"
+              ColumnSpacing="12"
+              BackgroundColor="#111318"
+              ZIndex="80">
+            <Button Text="←"
+                    Clicked="OnCloseClicked"
+                    WidthRequest="42"
+                    HeightRequest="42"
+                    Padding="0"
+                    FontSize="20"
+                    BackgroundColor="#23262E"
+                    TextColor="#F2F3F5"
+                    CornerRadius="12" />
+
+            <VerticalStackLayout Grid.Column="1"
+                                 Spacing="1"
+                                 VerticalOptions="Center">
+                <Label x:Name="TitleLabel"
+                       TextColor="#F2F3F5"
+                       FontSize="15"
+                       FontAttributes="Bold"
+                       MaxLines="1"
+                       LineBreakMode="TailTruncation" />
+                <Label x:Name="MetaLabel"
+                       TextColor="#777D89"
+                       FontSize="10"
+                       MaxLines="1"
+                       LineBreakMode="TailTruncation" />
+            </VerticalStackLayout>
+
+            <HorizontalStackLayout Grid.Column="2"
+                                   Spacing="8"
+                                   VerticalOptions="Center">
+                <Label x:Name="PlaybackStatusLabel"
+                       Text="解析中"
+                       TextColor="#777D89"
+                       FontSize="10"
+                       VerticalTextAlignment="Center" />
+                <Button x:Name="QualityMenuButton"
+                        Text="自动  ▾"
+                        Clicked="OnQualityMenuClicked"
+                        WidthRequest="92"
+                        HeightRequest="36"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="#20232B"
+                        TextColor="#EDEFF3"
+                        BorderColor="#30343E"
+                        BorderWidth="1"
+                        CornerRadius="10" />
+            </HorizontalStackLayout>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <!-- App-owned local player only. No Bilibili page is shown to the user. -->
+            <WebView x:Name="PlayerWebView"
+                     Loaded="OnPlayerWebViewLoaded"
+                     Navigated="OnPlayerNavigated"
+                     BackgroundColor="#08090C" />
+
+            <!-- Lightweight host only. A resolver WebView2 is created here on demand,
+                 removed immediately after playurl data has been captured, and does not stay
+                 alive during normal playback. -->
+            <Grid x:Name="ResolverHost"
+                  WidthRequest="1"
+                  HeightRequest="1"
+                  Opacity="0.01"
+                  InputTransparent="True"
+                  HorizontalOptions="Start"
+                  VerticalOptions="Start"
+                  IsClippedToBounds="True"
+                  ZIndex="-1" />
+
+            <Grid x:Name="PlayerLoadingOverlay"
+                  BackgroundColor="#B308090C"
+                  InputTransparent="False"
+                  ZIndex="30">
+                <Border Padding="22,16"
+                        BackgroundColor="#E615171D"
+                        Stroke="#292D36"
+                        StrokeThickness="1"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Center">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="16" />
+                    </Border.StrokeShape>
+                    <VerticalStackLayout Spacing="10"
+                                         HorizontalOptions="Center">
+                        <ActivityIndicator x:Name="LoadingIndicator"
+                                           IsRunning="True"
+                                           Color="#FB7299"
+                                           WidthRequest="26"
+                                           HeightRequest="26" />
+                        <Label x:Name="LoadingLabel"
+                               Text="正在初始化播放器…"
+                               TextColor="#C4C7CF"
+                               FontSize="12"
+                               HorizontalTextAlignment="Center"
+                               MaxLines="3" />
+                        <Button x:Name="RetryButton"
+                                Text="重试"
+                                Clicked="OnRetryClicked"
+                                IsVisible="False"
+                                BackgroundColor="#FB7299"
+                                TextColor="White"
+                                CornerRadius="9"
+                                Padding="18,7" />
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Custom quality menu. This replaces the native Windows Picker, which looked out of place. -->
+        <Border x:Name="QualityMenu"
+                Grid.RowSpan="2"
+                IsVisible="False"
+                WidthRequest="126"
+                Margin="0,56,18,0"
+                Padding="6"
+                HorizontalOptions="End"
+                VerticalOptions="Start"
+                BackgroundColor="#F21A1D23"
+                Stroke="#333741"
+                StrokeThickness="1"
+                ZIndex="120">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="12" />
+            </Border.StrokeShape>
+            <VerticalStackLayout Spacing="2">
+                <Button x:Name="Quality1080Button"
+                        Text="1080P"
+                        CommandParameter="80"
+                        Clicked="OnQualityOptionClicked"
+                        HeightRequest="34"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="Transparent"
+                        TextColor="#EDEFF3"
+                        CornerRadius="8" />
+                <Button x:Name="Quality720Button"
+                        Text="720P"
+                        CommandParameter="64"
+                        Clicked="OnQualityOptionClicked"
+                        HeightRequest="34"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="Transparent"
+                        TextColor="#EDEFF3"
+                        CornerRadius="8" />
+                <Button x:Name="Quality480Button"
+                        Text="480P"
+                        CommandParameter="32"
+                        Clicked="OnQualityOptionClicked"
+                        HeightRequest="34"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="Transparent"
+                        TextColor="#EDEFF3"
+                        CornerRadius="8" />
+                <Button x:Name="Quality360Button"
+                        Text="360P"
+                        CommandParameter="16"
+                        Clicked="OnQualityOptionClicked"
+                        HeightRequest="34"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="Transparent"
+                        TextColor="#EDEFF3"
+                        CornerRadius="8" />
+            </VerticalStackLayout>
+        </Border>
+    </Grid>
+</ContentPage>

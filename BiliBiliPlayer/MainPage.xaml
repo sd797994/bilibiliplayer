@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:models="clr-namespace:BiliBiliPlayer.Models"
+             xmlns:viewModels="clr-namespace:BiliBiliPlayer.ViewModels"
+             x:Class="BiliBiliPlayer.MainPage"
+             x:Name="PageRoot"
+             x:DataType="viewModels:MainViewModel"
+             BackgroundColor="#0F1014"
+             Shell.NavBarIsVisible="False">
+
+    <Grid RowDefinitions="82,*">
+        <!-- Keeps one WebView2 profile alive so login cookies are shared by all modal WebViews. -->
+        <WebView x:Name="SessionWebView"
+                 Source="about:blank"
+                 WidthRequest="1"
+                 HeightRequest="1"
+                 Opacity="0.01"
+                 InputTransparent="True"
+                 HorizontalOptions="Start"
+                 VerticalOptions="Start" />
+
+        <Grid Grid.Row="0"
+              Padding="28,14"
+              ColumnDefinitions="Auto,*,Auto"
+              ColumnSpacing="20"
+              BackgroundColor="#14161C">
+            <HorizontalStackLayout Grid.Column="0"
+                                   Spacing="12"
+                                   VerticalOptions="Center">
+                <Border WidthRequest="43"
+                        HeightRequest="43"
+                        Padding="0"
+                        BackgroundColor="#FB7299"
+                        StrokeThickness="0">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="13" />
+                    </Border.StrokeShape>
+                    <Label Text="哔"
+                           TextColor="White"
+                           FontAttributes="Bold"
+                           FontSize="23"
+                           HorizontalTextAlignment="Center"
+                           VerticalTextAlignment="Center" />
+                </Border>
+                <VerticalStackLayout Spacing="1"
+                                     VerticalOptions="Center">
+                    <Label Text="哔哩桌面"
+                           TextColor="#F7F8FA"
+                           FontSize="19"
+                           FontAttributes="Bold" />
+                    <Label Text="一个轻量的 B 站播放器"
+                           TextColor="#7F8491"
+                           FontSize="11" />
+                </VerticalStackLayout>
+            </HorizontalStackLayout>
+
+            <Border Grid.Column="1"
+                    MaximumWidthRequest="430"
+                    HeightRequest="42"
+                    Padding="16,0"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center"
+                    BackgroundColor="#20232B"
+                    Stroke="#2C303A"
+                    StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <Grid ColumnDefinitions="Auto,*"
+                      ColumnSpacing="10">
+                    <Label Text="⌕"
+                           TextColor="#8F94A1"
+                           FontSize="21"
+                           VerticalTextAlignment="Center" />
+                    <Entry x:Name="SearchEntry"
+                           Grid.Column="1"
+                           Placeholder="搜索 B 站视频，按 Enter 确认"
+                           PlaceholderColor="#777C88"
+                           TextColor="#ECEEF2"
+                           FontSize="13"
+                           BackgroundColor="Transparent"
+                           ReturnType="Search"
+                           ClearButtonVisibility="WhileEditing"
+                           Completed="OnSearchCompleted"
+                           VerticalOptions="Center" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2"
+                    Padding="8,6,10,6"
+                    BackgroundColor="#1B1E25"
+                    Stroke="#292D36"
+                    StrokeThickness="1"
+                    VerticalOptions="Center">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="14" />
+                </Border.StrokeShape>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnAccountTapped" />
+                </Border.GestureRecognizers>
+                <Grid ColumnDefinitions="42,Auto,Auto"
+                      ColumnSpacing="10">
+                    <Border WidthRequest="38"
+                            HeightRequest="38"
+                            Padding="0"
+                            BackgroundColor="#30343E"
+                            StrokeThickness="0">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="19" />
+                        </Border.StrokeShape>
+                        <Grid>
+                            <Label Text="{Binding AccountInitial}"
+                                   IsVisible="{Binding ShowAvatarFallback}"
+                                   TextColor="#FB7299"
+                                   FontAttributes="Bold"
+                                   FontSize="15"
+                                   HorizontalTextAlignment="Center"
+                                   VerticalTextAlignment="Center" />
+                            <Image Source="{Binding AvatarUrl}"
+                                   IsVisible="{Binding HasAvatar}"
+                                   Aspect="AspectFill"
+                                   WidthRequest="38"
+                                   HeightRequest="38" />
+                        </Grid>
+                    </Border>
+                    <VerticalStackLayout Grid.Column="1"
+                                         Spacing="0"
+                                         VerticalOptions="Center">
+                        <Label Text="{Binding AccountTitle}"
+                               TextColor="#EEF0F5"
+                               FontAttributes="Bold"
+                               FontSize="12"
+                               MaxLines="1" />
+                        <Label Text="{Binding AccountSubtitle}"
+                               TextColor="#7F8491"
+                               FontSize="10"
+                               MaxLines="1" />
+                    </VerticalStackLayout>
+                    <Label Grid.Column="2"
+                           Text="{Binding AccountActionText}"
+                           TextColor="#FB7299"
+                           FontAttributes="Bold"
+                           FontSize="11"
+                           VerticalTextAlignment="Center" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1"
+              Padding="28,12,28,0"
+              RowDefinitions="*">
+            <Grid Grid.Row="0">
+                <RefreshView IsRefreshing="{Binding IsRefreshing}"
+                             Command="{Binding RefreshCommand}"
+                             RefreshColor="#FB7299">
+                    <CollectionView x:Name="FeedCollectionView"
+                                    ItemsSource="{Binding Videos}"
+                                    SelectionMode="None"
+                                    Loaded="OnFeedCollectionLoaded"
+                                    Scrolled="OnFeedScrolled"
+                                    RemainingItemsThreshold="5"
+                                    RemainingItemsThresholdReachedCommand="{Binding LoadMoreCommand}"
+                                    VerticalScrollBarVisibility="Never">
+                        <CollectionView.ItemsLayout>
+                            <GridItemsLayout Orientation="Vertical"
+                                             Span="3"
+                                             HorizontalItemSpacing="18"
+                                             VerticalItemSpacing="18" />
+                        </CollectionView.ItemsLayout>
+
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="models:VideoItem">
+                                <Border BackgroundColor="#191B21"
+                                        Stroke="#252831"
+                                        StrokeThickness="1"
+                                        HeightRequest="262">
+                                    <Border.StrokeShape>
+                                        <RoundRectangle CornerRadius="15" />
+                                    </Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Tapped="OnVideoTapped"
+                                                              CommandParameter="{Binding .}" />
+                                    </Border.GestureRecognizers>
+                                    <Grid RowDefinitions="164,*">
+                                        <Grid Grid.Row="0">
+                                            <Image Source="{Binding CoverUrl}"
+                                                   Aspect="AspectFill"
+                                                   BackgroundColor="#242730" />
+                                            <BoxView HeightRequest="36"
+                                                     Color="#99000000"
+                                                     VerticalOptions="End" />
+                                            <Grid Padding="10,0"
+                                                  HeightRequest="36"
+                                                  ColumnDefinitions="Auto,Auto,*,Auto"
+                                                  ColumnSpacing="7"
+                                                  VerticalOptions="End">
+                                                <Label Text="▷"
+                                                       TextColor="#F1F2F5"
+                                                       FontSize="12"
+                                                       VerticalTextAlignment="Center" />
+                                                <Label Grid.Column="1"
+                                                       Text="{Binding ViewCountText}"
+                                                       TextColor="#F1F2F5"
+                                                       FontSize="11"
+                                                       VerticalTextAlignment="Center" />
+                                                <Label Grid.Column="3"
+                                                       Text="{Binding DurationText}"
+                                                       TextColor="#F1F2F5"
+                                                       FontSize="11"
+                                                       VerticalTextAlignment="Center" />
+                                            </Grid>
+                                            <Border Padding="8,4"
+                                                    Margin="10"
+                                                    BackgroundColor="#D94D78"
+                                                    StrokeThickness="0"
+                                                    HorizontalOptions="Start"
+                                                    VerticalOptions="Start">
+                                                <Border.StrokeShape>
+                                                    <RoundRectangle CornerRadius="7" />
+                                                </Border.StrokeShape>
+                                                <Label Text="{Binding ReasonText}"
+                                                       TextColor="White"
+                                                       FontSize="9"
+                                                       FontAttributes="Bold" />
+                                            </Border>
+                                        </Grid>
+
+                                        <Grid Grid.Row="1"
+                                              Padding="12,10,12,11"
+                                              RowDefinitions="*,Auto">
+                                            <Label Text="{Binding Title}"
+                                                   TextColor="#ECEEF2"
+                                                   FontSize="13"
+                                                   FontAttributes="Bold"
+                                                   LineBreakMode="TailTruncation"
+                                                   MaxLines="2" />
+                                            <Grid Grid.Row="1"
+                                                  ColumnDefinitions="*,Auto">
+                                                <Label Text="{Binding OwnerName, StringFormat='UP  {0}'}"
+                                                       TextColor="#858A96"
+                                                       FontSize="10"
+                                                       LineBreakMode="TailTruncation"
+                                                       MaxLines="1" />
+                                                <Label Grid.Column="1"
+                                                       Text="{Binding Bvid}"
+                                                       TextColor="#5F6470"
+                                                       FontSize="9" />
+                                            </Grid>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+
+                        <CollectionView.Footer>
+                            <Grid HeightRequest="58"
+                                  IsVisible="{Binding IsLoadingMore}">
+                                <HorizontalStackLayout Spacing="10"
+                                                       HorizontalOptions="Center"
+                                                       VerticalOptions="Center">
+                                    <ActivityIndicator IsRunning="{Binding IsLoadingMore}"
+                                                       Color="#FB7299"
+                                                       WidthRequest="20"
+                                                       HeightRequest="20" />
+                                    <Label Text="正在加载更多…"
+                                           TextColor="#858A96"
+                                           FontSize="11"
+                                           VerticalTextAlignment="Center" />
+                                </HorizontalStackLayout>
+                            </Grid>
+                        </CollectionView.Footer>
+                    </CollectionView>
+                </RefreshView>
+
+                <VerticalStackLayout IsVisible="{Binding IsBusy}"
+                                     Spacing="14"
+                                     HorizontalOptions="Center"
+                                     VerticalOptions="Center">
+                    <ActivityIndicator IsRunning="{Binding IsBusy}"
+                                       Color="#FB7299"
+                                       WidthRequest="34"
+                                       HeightRequest="34" />
+                    <Label Text="正在装填推荐内容…"
+                           TextColor="#8B909C"
+                           FontSize="12" />
+                </VerticalStackLayout>
+
+                <Border IsVisible="{Binding ShowErrorState}"
+                        Padding="34"
+                        MaximumWidthRequest="430"
+                        BackgroundColor="#181A20"
+                        Stroke="#292C35"
+                        StrokeThickness="1"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Center">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="18" />
+                    </Border.StrokeShape>
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="连接走丢了"
+                               TextColor="#F0F1F4"
+                               FontSize="18"
+                               FontAttributes="Bold"
+                               HorizontalTextAlignment="Center" />
+                        <Label Text="{Binding ErrorMessage}"
+                               TextColor="#858A96"
+                               FontSize="12"
+                               HorizontalTextAlignment="Center" />
+                        <Button Text="重新加载"
+                                Command="{Binding RetryCommand}"
+                                Margin="0,6,0,0"
+                                BackgroundColor="#FB7299"
+                                TextColor="White"
+                                CornerRadius="11" />
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</ContentPage>
