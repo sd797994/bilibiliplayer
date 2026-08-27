@@ -53,21 +53,18 @@ public sealed class BiliApiService : IDisposable
     }
 
     public async Task<RecommendedPage> GetRecommendedAsync(
-        string cookieHeader,
+        string? cookieHeader,
         int freshIndex,
+        int freshIndexInHour,
         int pageSize = 18,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(cookieHeader))
-        {
-            throw new BiliApiException("缺少登录信息，无法获取个性化推荐。", -101);
-        }
-
         var index = Math.Max(1, freshIndex);
+        var indexInHour = Math.Max(1, freshIndexInHour);
         var relativeUri =
             "x/web-interface/wbi/index/top/feed/rcmd" +
             $"?web_location=1430650&y_num=5&fresh_type=4&feed_version=V8" +
-            $"&fresh_idx={index}&fresh_idx_1h={index}&homepage_ver=1" +
+            $"&fresh_idx={index}&fresh_idx_1h={indexInHour}&homepage_ver=1" +
             $"&fetch_row=1&brush={index - 1}" +
             $"&ps={pageSize}&last_y_num=5&screen=1920-1080";
         var response = await SendAsync<RecommendedResponse>(
@@ -86,7 +83,7 @@ public sealed class BiliApiService : IDisposable
     public async Task<PopularPage> SearchVideosAsync(
         string keyword,
         int page,
-        int pageSize = 18,
+        string cookieHeader,
         CancellationToken cancellationToken = default)
     {
         var normalizedKeyword = keyword.Trim();
@@ -96,21 +93,30 @@ public sealed class BiliApiService : IDisposable
         }
 
         var pageNumber = Math.Max(1, page);
+        var encodedKeyword = Uri.EscapeDataString(normalizedKeyword);
         var relativeUri =
-            "x/web-interface/wbi/search/type" +
-            $"?search_type=video&keyword={Uri.EscapeDataString(normalizedKeyword)}" +
-            $"&page={pageNumber}&page_size={pageSize}";
-        var response = await SendAsync<SearchResponse>(relativeUri, null, cancellationToken);
+            "x/web-interface/wbi/search/all/v2" +
+            $"?keyword={encodedKeyword}&page={pageNumber}" +
+            "&order=&duration=&tids=0&platform=pc&web_location=333.1007";
+        var response = await SendAsync<SearchResponse>(
+            relativeUri,
+            cookieHeader,
+            cancellationToken,
+            new Uri($"https://search.bilibili.com/all?keyword={encodedKeyword}"));
 
         if (response.Code != 0 || response.Data is null)
         {
             throw new BiliApiException(response.Message, response.Code);
         }
 
+        var videoSection = response.Data.ResultSections.FirstOrDefault(
+            section => string.Equals(section.ResultType, "video", StringComparison.Ordinal));
+        var results = videoSection?.Data ?? [];
+
         return new PopularPage
         {
-            Items = response.Data.Results.Select(MapSearchVideo).ToList(),
-            NoMore = response.Data.Results.Count == 0 || pageNumber >= response.Data.PageCount
+            Items = results.Select(MapSearchVideo).ToList(),
+            NoMore = results.Count == 0 || pageNumber >= response.Data.PageCount
         };
     }
 
@@ -145,9 +151,15 @@ public sealed class BiliApiService : IDisposable
     private async Task<T> SendAsync<T>(
         string relativeUri,
         string? cookieHeader,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Uri? referrer = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, relativeUri);
+        if (referrer is not null)
+        {
+            request.Headers.Referrer = referrer;
+        }
+
         if (!string.IsNullOrWhiteSpace(cookieHeader))
         {
             request.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
@@ -175,6 +187,7 @@ public sealed class BiliApiService : IDisposable
         Picture = result.Picture,
         Title = WebUtility.HtmlDecode(Regex.Replace(result.Title, "<[^>]+>", string.Empty)),
         Duration = ParseDuration(result.Duration),
+        PublishTimestamp = result.PublishTimestamp,
         Owner = new VideoOwner
         {
             Mid = result.Mid,
@@ -274,7 +287,16 @@ public sealed class SearchData
     public int PageCount { get; set; }
 
     [JsonPropertyName("result")]
-    public List<SearchVideoResult> Results { get; set; } = [];
+    public List<SearchResultSection> ResultSections { get; set; } = [];
+}
+
+public sealed class SearchResultSection
+{
+    [JsonPropertyName("result_type")]
+    public string ResultType { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public List<SearchVideoResult> Data { get; set; } = [];
 }
 
 public sealed class SearchVideoResult
@@ -290,6 +312,10 @@ public sealed class SearchVideoResult
 
     [JsonPropertyName("duration")]
     public string Duration { get; set; } = string.Empty;
+
+    [JsonPropertyName("pubdate")]
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    public long PublishTimestamp { get; set; }
 
     [JsonPropertyName("author")]
     public string Author { get; set; } = string.Empty;

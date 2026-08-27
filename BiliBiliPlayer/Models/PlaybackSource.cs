@@ -1,10 +1,29 @@
+using System.Text.Json.Serialization;
+
 namespace BiliBiliPlayer.Models;
+
+public sealed class DanmakuComment
+{
+    [JsonPropertyName("t")]
+    public double Time { get; init; }
+
+    [JsonPropertyName("m")]
+    public int Mode { get; init; }
+
+    [JsonPropertyName("c")]
+    public int Color { get; init; }
+
+    [JsonPropertyName("x")]
+    public string Text { get; init; } = string.Empty;
+}
 
 public sealed class PlaybackSource
 {
     public string VideoUrl { get; init; } = string.Empty;
 
     public string? AudioUrl { get; init; }
+
+    public IReadOnlyList<string> AudioUrls { get; init; } = Array.Empty<string>();
 
     public int RequestedQuality { get; init; }
 
@@ -25,10 +44,18 @@ public sealed class PlaybackSource
 /// </summary>
 public sealed class PlaybackManifest
 {
+    public long Aid { get; init; }
+
+    public long OwnerMid { get; init; }
+
     public IReadOnlyDictionary<int, PlaybackSource> Sources { get; init; } =
         new Dictionary<int, PlaybackSource>();
 
     public IReadOnlyList<int> AvailableQualities { get; init; } = Array.Empty<int>();
+
+    public IReadOnlyList<DanmakuComment> Danmaku { get; init; } = Array.Empty<DanmakuComment>();
+
+    public VideoCommentSnapshot Comments { get; init; } = new();
 
     public int GetHighestAvailableQuality(int ceiling = int.MaxValue)
     {
@@ -75,6 +102,7 @@ public sealed class PlaybackManifest
         {
             VideoUrl = selected.VideoUrl,
             AudioUrl = selected.AudioUrl,
+            AudioUrls = selected.AudioUrls,
             RequestedQuality = requestedQuality,
             ActualQuality = selected.ActualQuality,
             VideoCodec = selected.VideoCodec,

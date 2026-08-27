@@ -150,18 +150,19 @@
         <Grid Grid.Row="1"
               Padding="28,12,28,0"
               RowDefinitions="*">
-            <Grid Grid.Row="0">
-                <RefreshView IsRefreshing="{Binding IsRefreshing}"
-                             Command="{Binding RefreshCommand}"
-                             RefreshColor="#FB7299">
-                    <CollectionView x:Name="FeedCollectionView"
-                                    ItemsSource="{Binding Videos}"
-                                    SelectionMode="None"
-                                    Loaded="OnFeedCollectionLoaded"
-                                    Scrolled="OnFeedScrolled"
-                                    RemainingItemsThreshold="5"
-                                    RemainingItemsThresholdReachedCommand="{Binding LoadMoreCommand}"
-                                    VerticalScrollBarVisibility="Never">
+            <Grid x:Name="FeedViewport"
+                  Grid.Row="0"
+                  IsClippedToBounds="True">
+                <CollectionView x:Name="FeedCollectionView"
+                                ItemsSource="{Binding Videos}"
+                                SelectionMode="None"
+                                ItemsUpdatingScrollMode="KeepScrollOffset"
+                                Loaded="OnFeedCollectionLoaded"
+                                Unloaded="OnFeedCollectionUnloaded"
+                                Scrolled="OnFeedScrolled"
+                                RemainingItemsThreshold="5"
+                                RemainingItemsThresholdReachedCommand="{Binding LoadMoreCommand}"
+                                VerticalScrollBarVisibility="Never">
                         <CollectionView.ItemsLayout>
                             <GridItemsLayout Orientation="Vertical"
                                              Span="3"
@@ -237,11 +238,16 @@
                                                    MaxLines="2" />
                                             <Grid Grid.Row="1"
                                                   ColumnDefinitions="*,Auto">
-                                                <Label Text="{Binding OwnerName, StringFormat='UP  {0}'}"
-                                                       TextColor="#858A96"
-                                                       FontSize="10"
-                                                       LineBreakMode="TailTruncation"
-                                                       MaxLines="1" />
+                                                <HorizontalStackLayout Spacing="10">
+                                                    <Label Text="{Binding OwnerName, StringFormat='UP  {0}'}"
+                                                           TextColor="#858A96"
+                                                           FontSize="10"
+                                                           LineBreakMode="TailTruncation"
+                                                           MaxLines="1" />
+                                                    <Label Text="{Binding PublishDateText}"
+                                                           TextColor="#858A96"
+                                                           FontSize="10" />
+                                                </HorizontalStackLayout>
                                                 <Label Grid.Column="1"
                                                        Text="{Binding Bvid}"
                                                        TextColor="#5F6470"
@@ -270,8 +276,35 @@
                                 </HorizontalStackLayout>
                             </Grid>
                         </CollectionView.Footer>
-                    </CollectionView>
-                </RefreshView>
+                </CollectionView>
+
+                <Border x:Name="PullRefreshIndicator"
+                        ZIndex="2"
+                        WidthRequest="44"
+                        HeightRequest="44"
+                        Padding="10"
+                        Margin="0,10,0,0"
+                        Opacity="0"
+                        Scale="0.72"
+                        TranslationY="-10"
+                        InputTransparent="True"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Start"
+                        BackgroundColor="#F21B1E25"
+                        Stroke="#3A3E49"
+                        StrokeThickness="1">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="22" />
+                    </Border.StrokeShape>
+                    <Path x:Name="PullRefreshIcon"
+                          Data="M19,8.5 A7.5,7.5 0 1 0 19.2,15 M19,8.5 L19,3.5 M19,8.5 L14,8.5"
+                          Stroke="#F7F8FA"
+                          StrokeThickness="2"
+                          StrokeLineCap="Round"
+                          StrokeLineJoin="Round"
+                          Aspect="Uniform"
+                          Rotation="-100" />
+                </Border>
 
                 <VerticalStackLayout IsVisible="{Binding IsBusy}"
                                      Spacing="14"

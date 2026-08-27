@@ -7,6 +7,9 @@ namespace BiliBiliPlayer;
 
 public partial class MainPage : ContentPage
 {
+    private const double PullRefreshThreshold = 82;
+    private const double PullRefreshMaxDistance = 116;
+    private const double PullRefreshRestingDistance = 64;
     private readonly BiliApiService _apiService = new();
     private readonly MainViewModel _viewModel;
     private bool _initialized;
@@ -14,6 +17,17 @@ public partial class MainPage : ContentPage
 #if WINDOWS
     private Microsoft.UI.Input.InputKeyboardSource? _keyboardSource;
     private Microsoft.UI.Xaml.Controls.ScrollViewer? _feedScrollViewer;
+    private Microsoft.UI.Xaml.UIElement? _feedPointerSurface;
+    private readonly Microsoft.UI.Xaml.Input.PointerEventHandler _feedPointerPressedHandler;
+    private readonly Microsoft.UI.Xaml.Input.PointerEventHandler _feedPointerMovedHandler;
+    private readonly Microsoft.UI.Xaml.Input.PointerEventHandler _feedPointerReleasedHandler;
+    private readonly Microsoft.UI.Xaml.Input.PointerEventHandler _feedPointerCanceledHandler;
+    private bool _isPullPointerDown;
+    private bool _isPullDragging;
+    private bool _isPullRefreshRunning;
+    private uint _pullPointerId;
+    private double _pullStartX;
+    private double _pullStartY;
 #endif
 
     public MainPage()
@@ -21,6 +35,12 @@ public partial class MainPage : ContentPage
         InitializeComponent();
         _viewModel = new MainViewModel(_apiService);
         BindingContext = _viewModel;
+#if WINDOWS
+        _feedPointerPressedHandler = OnFeedPointerPressed;
+        _feedPointerMovedHandler = OnFeedPointerMoved;
+        _feedPointerReleasedHandler = OnFeedPointerReleased;
+        _feedPointerCanceledHandler = OnFeedPointerCanceled;
+#endif
     }
 
     protected override async void OnAppearing()
@@ -71,6 +91,7 @@ public partial class MainPage : ContentPage
         if (Handler is null)
         {
             DetachWindowKeyboardSource();
+            DetachFeedNativeHandlers();
         }
         else
         {
@@ -140,11 +161,13 @@ public partial class MainPage : ContentPage
     {
         AttachWindowKeyboardSource();
 
-        for (var attempt = 0; attempt < 6 && _feedScrollViewer is null; attempt++)
+        for (var attempt = 0; attempt < 6; attempt++)
         {
-            if (FeedCollectionView.Handler?.PlatformView is Microsoft.UI.Xaml.DependencyObject root)
+            if (FeedCollectionView.Handler?.PlatformView is Microsoft.UI.Xaml.UIElement root)
             {
-                _feedScrollViewer = FindDescendant<Microsoft.UI.Xaml.Controls.ScrollViewer>(root);
+                AttachPullToRefresh(root);
+                _feedScrollViewer ??=
+                    FindDescendant<Microsoft.UI.Xaml.Controls.ScrollViewer>(root);
                 if (_feedScrollViewer is not null)
                 {
                     _feedScrollViewer.ViewChanged += OnFeedScrollViewerViewChanged;
@@ -155,6 +178,261 @@ public partial class MainPage : ContentPage
 
             await Task.Delay(150);
         }
+    }
+
+    private void AttachPullToRefresh(Microsoft.UI.Xaml.UIElement pointerSurface)
+    {
+        if (ReferenceEquals(_feedPointerSurface, pointerSurface))
+        {
+            return;
+        }
+
+        DetachPullToRefresh();
+        _feedPointerSurface = pointerSurface;
+        pointerSurface.AddHandler(
+            Microsoft.UI.Xaml.UIElement.PointerPressedEvent,
+            _feedPointerPressedHandler,
+            true);
+        pointerSurface.AddHandler(
+            Microsoft.UI.Xaml.UIElement.PointerMovedEvent,
+            _feedPointerMovedHandler,
+            true);
+        pointerSurface.AddHandler(
+            Microsoft.UI.Xaml.UIElement.PointerReleasedEvent,
+            _feedPointerReleasedHandler,
+            true);
+        pointerSurface.AddHandler(
+            Microsoft.UI.Xaml.UIElement.PointerCanceledEvent,
+            _feedPointerCanceledHandler,
+            true);
+        pointerSurface.AddHandler(
+            Microsoft.UI.Xaml.UIElement.PointerCaptureLostEvent,
+            _feedPointerCanceledHandler,
+            true);
+    }
+
+    private void DetachPullToRefresh()
+    {
+        if (_feedPointerSurface is null)
+        {
+            return;
+        }
+
+        _feedPointerSurface.RemoveHandler(
+            Microsoft.UI.Xaml.UIElement.PointerPressedEvent,
+            _feedPointerPressedHandler);
+        _feedPointerSurface.RemoveHandler(
+            Microsoft.UI.Xaml.UIElement.PointerMovedEvent,
+            _feedPointerMovedHandler);
+        _feedPointerSurface.RemoveHandler(
+            Microsoft.UI.Xaml.UIElement.PointerReleasedEvent,
+            _feedPointerReleasedHandler);
+        _feedPointerSurface.RemoveHandler(
+            Microsoft.UI.Xaml.UIElement.PointerCanceledEvent,
+            _feedPointerCanceledHandler);
+        _feedPointerSurface.RemoveHandler(
+            Microsoft.UI.Xaml.UIElement.PointerCaptureLostEvent,
+            _feedPointerCanceledHandler);
+        _feedPointerSurface = null;
+        ResetPullTracking();
+    }
+
+    private void DetachFeedNativeHandlers()
+    {
+        if (_feedScrollViewer is not null)
+        {
+            _feedScrollViewer.ViewChanged -= OnFeedScrollViewerViewChanged;
+            _feedScrollViewer = null;
+        }
+
+        DetachPullToRefresh();
+    }
+
+    private void OnFeedPointerPressed(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_isHomeActive ||
+            _isPullRefreshRunning ||
+            _viewModel.IsRefreshing ||
+            _feedPointerSurface is null ||
+            _feedScrollViewer is null ||
+            _feedScrollViewer.VerticalOffset > 0.5 ||
+            Navigation.ModalStack.Count != 0)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(_feedPointerSurface);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        _isPullPointerDown = true;
+        _isPullDragging = false;
+        _pullPointerId = e.Pointer.PointerId;
+        _pullStartX = point.Position.X;
+        _pullStartY = point.Position.Y;
+    }
+
+    private void OnFeedPointerMoved(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_isPullPointerDown ||
+            e.Pointer.PointerId != _pullPointerId ||
+            _feedPointerSurface is null)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(_feedPointerSurface);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            var wasDragging = _isPullDragging;
+            ResetPullTracking();
+            if (wasDragging && !_isPullRefreshRunning)
+            {
+                _ = ResetPullVisualAsync();
+            }
+
+            return;
+        }
+
+        var deltaX = point.Position.X - _pullStartX;
+        var deltaY = point.Position.Y - _pullStartY;
+        if (!_isPullDragging)
+        {
+            if (deltaY <= 4)
+            {
+                return;
+            }
+
+            if (Math.Abs(deltaX) > deltaY)
+            {
+                ResetPullTracking();
+                return;
+            }
+
+            _isPullDragging = true;
+            _feedPointerSurface.CapturePointer(e.Pointer);
+        }
+
+        e.Handled = true;
+        var pullDistance = Math.Clamp(deltaY * 0.52, 0, PullRefreshMaxDistance);
+        UpdatePullVisual(pullDistance);
+    }
+
+    private async void OnFeedPointerReleased(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_isPullPointerDown || e.Pointer.PointerId != _pullPointerId)
+        {
+            return;
+        }
+
+        var shouldRefresh =
+            _isPullDragging && FeedCollectionView.TranslationY >= PullRefreshThreshold;
+        var wasDragging = _isPullDragging;
+        ResetPullTracking();
+        _feedPointerSurface?.ReleasePointerCapture(e.Pointer);
+
+        if (!wasDragging)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (shouldRefresh)
+        {
+            await RunPullRefreshAsync();
+        }
+        else
+        {
+            await ResetPullVisualAsync();
+        }
+    }
+
+    private async void OnFeedPointerCanceled(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_isPullPointerDown || e.Pointer.PointerId != _pullPointerId)
+        {
+            return;
+        }
+
+        var wasDragging = _isPullDragging;
+        ResetPullTracking();
+        if (wasDragging && !_isPullRefreshRunning)
+        {
+            e.Handled = true;
+            await ResetPullVisualAsync();
+        }
+    }
+
+    private void ResetPullTracking()
+    {
+        _isPullPointerDown = false;
+        _isPullDragging = false;
+        _pullPointerId = 0;
+    }
+
+    private void UpdatePullVisual(double pullDistance)
+    {
+        var progress = Math.Clamp(pullDistance / PullRefreshThreshold, 0, 1);
+        FeedCollectionView.TranslationY = pullDistance;
+        PullRefreshIndicator.Opacity = Math.Clamp((pullDistance - 8) / 48, 0, 1);
+        PullRefreshIndicator.Scale = 0.72 + (0.28 * progress);
+        PullRefreshIndicator.TranslationY = -10 + (10 * progress);
+        PullRefreshIcon.Rotation = -100 + (240 * progress);
+    }
+
+    private async Task RunPullRefreshAsync()
+    {
+        if (_isPullRefreshRunning)
+        {
+            return;
+        }
+
+        _isPullRefreshRunning = true;
+        try
+        {
+            await FeedCollectionView.TranslateTo(
+                0,
+                PullRefreshRestingDistance,
+                140,
+                Easing.CubicOut);
+
+            var reloadTask = _viewModel.ReloadAsync();
+            while (!reloadTask.IsCompleted)
+            {
+                PullRefreshIcon.Rotation %= 360;
+                await PullRefreshIcon.RotateTo(
+                    PullRefreshIcon.Rotation + 360,
+                    650,
+                    Easing.Linear);
+            }
+
+            await reloadTask;
+        }
+        finally
+        {
+            await ResetPullVisualAsync();
+            _isPullRefreshRunning = false;
+        }
+    }
+
+    private async Task ResetPullVisualAsync()
+    {
+        await Task.WhenAll(
+            FeedCollectionView.TranslateTo(0, 0, 220, Easing.CubicOut),
+            PullRefreshIndicator.FadeTo(0, 180, Easing.CubicIn),
+            PullRefreshIndicator.ScaleTo(0.72, 180, Easing.CubicIn));
+        PullRefreshIndicator.TranslationY = -10;
+        PullRefreshIcon.Rotation = -100;
     }
 
     private void OnFeedScrollViewerViewChanged(
@@ -205,6 +483,13 @@ public partial class MainPage : ContentPage
     }
 #endif
 
+    private void OnFeedCollectionUnloaded(object? sender, EventArgs e)
+    {
+#if WINDOWS
+        DetachFeedNativeHandlers();
+#endif
+    }
+
     private void RequestMoreVideos()
     {
         if (_viewModel.LoadMoreCommand.CanExecute(null))
@@ -231,7 +516,7 @@ public partial class MainPage : ContentPage
             return;
         }
 
-        await Navigation.PushModalAsync(new PlayerPage(video));
+        await Navigation.PushModalAsync(new PlayerPage(video, _viewModel.CookieHeader));
     }
 
     private async void OnAccountTapped(object? sender, TappedEventArgs e)

@@ -9,9 +9,14 @@ namespace BiliBiliPlayer.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged
 {
+    private const int RecommendationBatchSize = 18;
     private readonly BiliApiService _apiService;
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     private int _page = 1;
+    private int _recommendationFreshIndex;
+    private int _recommendationFreshIndexInHour;
+    private int _popularPage;
+    private DateTimeOffset _recommendationHourStartedAt = DateTimeOffset.UtcNow;
     private bool _hasMore = true;
     private bool _isBusy;
     private bool _isRefreshing;
@@ -24,7 +29,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _cookieHeader = string.Empty;
     private string _searchKeyword = string.Empty;
     private bool _isSearchMode;
-    private bool _personalizedFeedAvailable;
     private UserProfile? _profile;
 
     public MainViewModel(BiliApiService apiService)
@@ -96,6 +100,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public bool IsLoggedIn => _profile is not null;
 
+    public string CookieHeader => _cookieHeader;
+
     public bool HasAvatar => !string.IsNullOrWhiteSpace(_profile?.AvatarUrl);
 
     public bool ShowAvatarFallback => !HasAvatar;
@@ -134,7 +140,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _profile = profile;
         _cookieHeader = cookieHeader;
-        _personalizedFeedAvailable = HasPersonalizedSession;
+        ResetRecommendationCursors();
 
         if (profile is null)
         {
@@ -178,7 +184,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _profile = null;
         _cookieHeader = string.Empty;
-        _personalizedFeedAvailable = false;
+        ResetRecommendationCursors();
         BiliSessionStore.ClearProfile();
         UpdateFeedCaption();
         RaiseAccountProperties();
@@ -186,13 +192,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private async Task RefreshAsync()
     {
-        if (!await _loadGate.WaitAsync(0))
+        if (IsRefreshing)
         {
-            IsRefreshing = false;
             return;
         }
 
         IsRefreshing = true;
+        await _loadGate.WaitAsync();
         try
         {
             await RefreshCoreAsync(lockAlreadyHeld: true);
@@ -218,13 +224,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
             PopularPage result;
             if (_isSearchMode)
             {
-                result = await _apiService.SearchVideosAsync(_searchKeyword, 1);
+                result = await _apiService.SearchVideosAsync(_searchKeyword, 1, _cookieHeader);
                 UpdateFeedCaption();
             }
             else
             {
-                _personalizedFeedAvailable = HasPersonalizedSession;
-                result = await GetFeedPageAsync(1);
+                var previousIds = Videos
+                    .Select(video => video.Bvid)
+                    .Where(bvid => !string.IsNullOrWhiteSpace(bvid))
+                    .ToHashSet(StringComparer.Ordinal);
+                result = await GetFreshFeedAsync(previousIds);
             }
             Videos.Clear();
             foreach (var video in result.Items.Where(IsPlayableVideo))
@@ -279,8 +288,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 var nextPage = _page + 1;
                 var result = _isSearchMode
-                    ? await _apiService.SearchVideosAsync(_searchKeyword, nextPage)
-                    : await GetFeedPageAsync(nextPage);
+                    ? await _apiService.SearchVideosAsync(_searchKeyword, nextPage, _cookieHeader)
+                    : await GetFeedBatchAsync();
                 _page = nextPage;
                 _hasMore = !result.NoMore;
 
@@ -311,34 +320,138 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool HasPersonalizedSession =>
         _profile is not null && !string.IsNullOrWhiteSpace(_cookieHeader);
 
-    private async Task<PopularPage> GetFeedPageAsync(int page)
+    private async Task<PopularPage> GetFreshFeedAsync(IReadOnlySet<string> previousIds)
     {
-        if (_personalizedFeedAvailable && _profile is not null)
+        var items = new List<VideoItem>(RecommendationBatchSize);
+        var acceptedIds = new HashSet<string>(StringComparer.Ordinal);
+        var noMore = false;
+
+        // A recommendation refresh can legitimately contain a little overlap. Advance through
+        // additional recommendation contexts until the visible batch is actually new.
+        for (var attempt = 0;
+             attempt < 3 && items.Count < RecommendationBatchSize && !noMore;
+             attempt++)
+        {
+            var batch = await GetFeedBatchAsync();
+            noMore = batch.NoMore;
+            foreach (var video in batch.Items.Where(IsPlayableVideo))
+            {
+                if (!previousIds.Contains(video.Bvid) && acceptedIds.Add(video.Bvid))
+                {
+                    items.Add(video);
+                    if (items.Count >= RecommendationBatchSize)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (items.Count == 0)
+        {
+            throw new BiliApiException("暂时没有获取到新的推荐内容。", -1);
+        }
+
+        return new PopularPage
+        {
+            Items = items,
+            NoMore = noMore
+        };
+    }
+
+    private async Task<PopularPage> GetFeedBatchAsync()
+    {
+        var (freshIndex, freshIndexInHour) = NextRecommendationCursor();
+
+        if (HasPersonalizedSession && _profile is not null)
         {
             try
             {
-                var recommended = await _apiService.GetRecommendedAsync(_cookieHeader, page);
-                if (recommended.Mid == _profile.Mid && recommended.Mid != 0)
+                var personalized = await _apiService.GetRecommendedAsync(
+                    _cookieHeader,
+                    freshIndex,
+                    freshIndexInHour);
+                if (personalized.Mid == _profile.Mid && personalized.Mid != 0)
                 {
                     FeedCaption = $"你好，{_profile.UserName} · 已启用登录账号的个性化推荐";
-                    return new PopularPage
-                    {
-                        Items = recommended.Items,
-                        NoMore = false
-                    };
+                    return ToPopularPage(personalized);
+                }
+
+                // An expired login can still receive a valid anonymous dynamic feed.
+                if (personalized.Mid == 0 && personalized.Items.Count > 0)
+                {
+                    FeedCaption = $"你好，{_profile.UserName} · 登录推荐暂不可用，已切换动态推荐";
+                    return ToPopularPage(personalized);
                 }
             }
             catch
             {
-                // Personalized recommendations are an unofficial web endpoint and can fail.
+                // Retry the same recommendation context without account cookies below.
             }
-
-            _personalizedFeedAvailable = false;
-            FeedCaption = $"你好，{_profile.UserName} · 个性化推荐暂不可用，已回退热门内容";
         }
 
-        return await _apiService.GetPopularAsync(page);
+        try
+        {
+            var dynamicFeed = await _apiService.GetRecommendedAsync(
+                string.Empty,
+                freshIndex,
+                freshIndexInHour);
+            if (dynamicFeed.Items.Count > 0)
+            {
+                FeedCaption = _profile is null
+                    ? "来自哔哩哔哩的动态推荐"
+                    : $"你好，{_profile.UserName} · 当前展示动态推荐";
+                return ToPopularPage(dynamicFeed);
+            }
+        }
+        catch
+        {
+            // The stable popular feed remains the final availability fallback.
+        }
+
+        var popular = await _apiService.GetPopularAsync(NextPopularPage());
+        FeedCaption = _profile is null
+            ? "动态推荐暂不可用，已切换站内热门内容"
+            : $"你好，{_profile.UserName} · 动态推荐暂不可用，已切换站内热门内容";
+        return popular;
     }
+
+    private (int FreshIndex, int FreshIndexInHour) NextRecommendationCursor()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _recommendationHourStartedAt >= TimeSpan.FromHours(1))
+        {
+            _recommendationHourStartedAt = now;
+            _recommendationFreshIndexInHour = 0;
+        }
+
+        _recommendationFreshIndex = NextPositiveCounter(_recommendationFreshIndex);
+        _recommendationFreshIndexInHour = NextPositiveCounter(_recommendationFreshIndexInHour);
+        return (_recommendationFreshIndex, _recommendationFreshIndexInHour);
+    }
+
+    private int NextPopularPage()
+    {
+        _popularPage = NextPositiveCounter(_popularPage);
+        return _popularPage;
+    }
+
+    private void ResetRecommendationCursors()
+    {
+        _recommendationFreshIndex = 0;
+        _recommendationFreshIndexInHour = 0;
+        _popularPage = 0;
+        _recommendationHourStartedAt = DateTimeOffset.UtcNow;
+    }
+
+    private static int NextPositiveCounter(int current) =>
+        current == int.MaxValue ? 1 : current + 1;
+
+    private static PopularPage ToPopularPage(RecommendedPage recommended) => new()
+    {
+        Items = recommended.Items,
+        NoMore = false
+    };
 
     private void UpdateFeedCaption()
     {

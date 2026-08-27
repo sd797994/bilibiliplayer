@@ -45,6 +45,30 @@
                        TextColor="#777D89"
                        FontSize="10"
                        VerticalTextAlignment="Center" />
+                <Button x:Name="DanmakuButton"
+                        Text="弹幕"
+                        Clicked="OnDanmakuClicked"
+                        WidthRequest="72"
+                        HeightRequest="36"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="#20232B"
+                        TextColor="#FB7299"
+                        BorderColor="#30343E"
+                        BorderWidth="1"
+                        CornerRadius="10" />
+                <Button x:Name="ShareButton"
+                        Text="分享"
+                        Clicked="OnShareClicked"
+                        WidthRequest="72"
+                        HeightRequest="36"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="#20232B"
+                        TextColor="#EDEFF3"
+                        BorderColor="#30343E"
+                        BorderWidth="1"
+                        CornerRadius="10" />
                 <Button x:Name="QualityMenuButton"
                         Text="自动  ▾"
                         Clicked="OnQualityMenuClicked"
@@ -178,5 +202,136 @@
                         CornerRadius="8" />
             </VerticalStackLayout>
         </Border>
+
+        <Grid x:Name="ShareOverlay"
+              Grid.RowSpan="2"
+              IsVisible="False"
+              ZIndex="140">
+            <BoxView Color="#B308090C">
+                <BoxView.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnShareOverlayTapped" />
+                </BoxView.GestureRecognizers>
+            </BoxView>
+
+            <Border MaximumWidthRequest="380"
+                    Padding="18"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center"
+                    BackgroundColor="#F21A1D23"
+                    Stroke="#333741"
+                    StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="16" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="12">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <VerticalStackLayout Spacing="2"
+                                             VerticalOptions="Center">
+                            <Label Text="分享到微信"
+                                   TextColor="#F2F3F5"
+                                   FontSize="16"
+                                   FontAttributes="Bold" />
+                            <Label Text="发送标题、UP/播放量、封面和原始链接"
+                                   TextColor="#8A909C"
+                                   FontSize="11" />
+                        </VerticalStackLayout>
+                        <Button Grid.Column="1"
+                                Text="×"
+                                Clicked="OnShareOverlayTapped"
+                                WidthRequest="34"
+                                HeightRequest="34"
+                                Padding="0"
+                                FontSize="18"
+                                BackgroundColor="#23262E"
+                                TextColor="#EDEFF3"
+                                CornerRadius="10"
+                                VerticalOptions="Start" />
+                    </Grid>
+
+                    <Border x:Name="ShareCard"
+                            BackgroundColor="#23262E"
+                            Stroke="#3A3F4A"
+                            StrokeThickness="1">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="12" />
+                        </Border.StrokeShape>
+                        <Grid RowDefinitions="Auto,*">
+                            <Grid HeightRequest="168">
+                                <Image x:Name="ShareCoverImage"
+                                       Aspect="AspectFill"
+                                       BackgroundColor="#1A1C22" />
+                                <BoxView HeightRequest="34"
+                                         Color="#99000000"
+                                         VerticalOptions="End" />
+                                <Grid Padding="10,0"
+                                      HeightRequest="34"
+                                      ColumnDefinitions="Auto,*,Auto"
+                                      VerticalOptions="End">
+                                    <Label Text="哔哩哔哩"
+                                           TextColor="#FB7299"
+                                           FontSize="10"
+                                           FontAttributes="Bold"
+                                           VerticalTextAlignment="Center" />
+                                    <Label x:Name="ShareDurationLabel"
+                                           Grid.Column="2"
+                                           TextColor="#F1F2F5"
+                                           FontSize="11"
+                                           VerticalTextAlignment="Center" />
+                                </Grid>
+                            </Grid>
+                            <VerticalStackLayout Grid.Row="1"
+                                                 Padding="12,10,12,12"
+                                                 Spacing="6">
+                                <Label x:Name="ShareTitleLabel"
+                                       TextColor="#F2F3F5"
+                                       FontSize="14"
+                                       FontAttributes="Bold"
+                                       LineBreakMode="TailTruncation"
+                                       MaxLines="2" />
+                                 <Label x:Name="ShareMetaLabel"
+                                        TextColor="#8A909C"
+                                        FontSize="11"
+                                        LineBreakMode="TailTruncation"
+                                        MaxLines="2" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+
+                    <Label x:Name="ShareHintLabel"
+                           Text="将直接发送到固定微信群。"
+                           TextColor="#9AA0AC"
+                           FontSize="11"
+                           LineBreakMode="WordWrap" />
+
+                    <Border BackgroundColor="#23262E"
+                            Stroke="#3A3F4A"
+                            StrokeThickness="1"
+                            Padding="10,0">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="8" />
+                        </Border.StrokeShape>
+                        <Entry x:Name="RecommendationEntry"
+                               Placeholder="推荐语（可选），将在卡片成功后发送"
+                               PlaceholderColor="#717783"
+                               TextColor="#F2F3F5"
+                               BackgroundColor="Transparent"
+                               FontSize="12"
+                               HeightRequest="38"
+                               MaxLength="500"
+                               ReturnType="Done"
+                               ClearButtonVisibility="WhileEditing" />
+                    </Border>
+
+                    <Button x:Name="ShareToWeChatButton"
+                            Text="发送到微信群"
+                            Clicked="OnShareToWeChatClicked"
+                            HeightRequest="40"
+                            FontSize="13"
+                            BackgroundColor="#FB7299"
+                            TextColor="White"
+                            CornerRadius="10" />
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
     </Grid>
 </ContentPage>

@@ -16,6 +16,10 @@ public sealed class VideoItem
     [JsonPropertyName("duration")]
     public int Duration { get; set; }
 
+    [JsonPropertyName("pubdate")]
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    public long PublishTimestamp { get; set; }
+
     [JsonPropertyName("owner")]
     public VideoOwner Owner { get; set; } = new();
 
@@ -34,6 +38,29 @@ public sealed class VideoItem
     public string ViewCountText => FormatCount(Statistics.View);
 
     public string DanmakuCountText => FormatCount(Statistics.Danmaku);
+
+    public string PublishDateText
+    {
+        get
+        {
+            if (PublishTimestamp <= 0)
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return DateTimeOffset
+                    .FromUnixTimeSeconds(PublishTimestamp)
+                    .ToLocalTime()
+                    .ToString("yyyy-MM-dd");
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return string.Empty;
+            }
+        }
+    }
 
     public string DurationText
     {
