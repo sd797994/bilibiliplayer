@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Bilibili 微信分享",
+  "version": "0.1.0",
+  "description": "从 Bilibili 视频详情页通过本地微信 Hook 发送小卡片和可选推荐语。",
+  "permissions": [
+    "activeTab",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://api.bilibili.com/*",
+    "https://*.hdslb.com/*",
+    "http://127.0.0.1:30001/*",
+    "http://127.0.0.1:30002/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "B站分享到微信",
+    "default_popup": "popup.html"
+  }
+}

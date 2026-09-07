@@ -1,0 +1,90 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 420px;
+  min-height: 560px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #101217;
+  color: #f2f3f5;
+}
+.panel { padding: 16px; }
+header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+h1 { margin: 0; font-size: 18px; }
+p { margin: 4px 0 0; color: #8a909c; font-size: 12px; }
+button, input, textarea { font: inherit; }
+button { border: 0; cursor: pointer; }
+.ghost, #loadButton {
+  background: #2b2f38;
+  color: #e6e8ec;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.source-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 14px; }
+input, textarea {
+  width: 100%;
+  background: #23262e;
+  color: #f2f3f5;
+  border: 1px solid #3a3f4a;
+  border-radius: 9px;
+  outline: none;
+  padding: 9px 10px;
+}
+input:focus, textarea:focus { border-color: #fb7299; }
+.video-card {
+  margin-top: 12px;
+  border: 1px solid #3a3f4a;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #23262e;
+}
+.hidden { display: none; }
+.cover-wrap { position: relative; height: 138px; background: #1a1c22; }
+.cover-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#durationBadge {
+  position: absolute;
+  right: 9px;
+  bottom: 8px;
+  background: rgba(0,0,0,.68);
+  color: #fff;
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.video-info { display: grid; gap: 5px; padding: 11px 12px 12px; }
+#videoTitle { line-height: 1.35; font-size: 14px; }
+#videoMeta { color: #8a909c; font-size: 11px; }
+.contacts-head { display: flex; justify-content: space-between; margin: 14px 0 8px; font-size: 12px; }
+#contactsStatus { color: #8a909c; }
+.contacts { max-height: 182px; overflow: auto; display: grid; gap: 6px; }
+.contact {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  background: #23262e;
+  color: #f2f3f5;
+  border: 1px solid #333741;
+  border-radius: 9px;
+  text-align: left;
+}
+.contact.selected { background: #3a2732; border-color: #fb7299; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #343943; }
+.avatar-fallback { display: grid; place-items: center; color: #dde0e6; font-weight: 700; }
+.contact-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.contact-kind { color: #8a909c; font-size: 10px; }
+textarea { margin-top: 12px; resize: vertical; min-height: 72px; }
+.status { min-height: 20px; margin: 10px 2px 8px; color: #9aa0ac; font-size: 11px; line-height: 1.4; }
+.status.ok { color: #55c58a; }
+.status.error { color: #ff7b86; }
+.send {
+  width: 100%;
+  min-height: 40px;
+  background: #fb7299;
+  color: white;
+  border-radius: 10px;
+  font-weight: 700;
+}
+.send:disabled { cursor: not-allowed; opacity: .5; }
+.empty { color: #717783; font-size: 12px; padding: 18px 0; text-align: center; }
