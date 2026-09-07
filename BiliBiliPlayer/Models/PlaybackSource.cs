@@ -17,6 +17,78 @@ public sealed class DanmakuComment
     public string Text { get; init; } = string.Empty;
 }
 
+public sealed class SubtitleCue
+{
+    [JsonPropertyName("f")]
+    public double From { get; init; }
+
+    [JsonPropertyName("t")]
+    public double To { get; init; }
+
+    [JsonPropertyName("c")]
+    public string Content { get; init; } = string.Empty;
+
+    [JsonPropertyName("l")]
+    public int Location { get; init; } = 2;
+}
+
+public sealed class SubtitleTrack
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("lan")]
+    public string LanguageCode { get; init; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string DisplayName { get; init; } = string.Empty;
+
+    [JsonPropertyName("ai")]
+    public bool IsAiGenerated { get; init; }
+
+    [JsonPropertyName("def")]
+    public bool IsDefault { get; init; }
+
+    [JsonPropertyName("cues")]
+    public IReadOnlyList<SubtitleCue> Cues { get; init; } = Array.Empty<SubtitleCue>();
+}
+
+public sealed class SubtitleSnapshot
+{
+    [JsonPropertyName("bvid")]
+    public string Bvid { get; init; } = string.Empty;
+
+    [JsonPropertyName("aid")]
+    public long Aid { get; init; }
+
+    [JsonPropertyName("cid")]
+    public long Cid { get; init; }
+
+    [JsonPropertyName("tracks")]
+    public IReadOnlyList<SubtitleTrack> Tracks { get; init; } = Array.Empty<SubtitleTrack>();
+
+    [JsonPropertyName("login")]
+    public bool RequiresLogin { get; init; }
+
+    [JsonPropertyName("error")]
+    public string Error { get; init; } = string.Empty;
+}
+
+public sealed class VideoPart
+{
+    [JsonPropertyName("cid")]
+    public long Cid { get; init; }
+
+    [JsonPropertyName("page")]
+    public int PageNumber { get; init; }
+
+    [JsonPropertyName("part")]
+    public string Title { get; init; } = string.Empty;
+
+    [JsonPropertyName("duration")]
+    public int Duration { get; init; }
+}
+
 public sealed class PlaybackSource
 {
     public string VideoUrl { get; init; } = string.Empty;
@@ -44,7 +116,15 @@ public sealed class PlaybackSource
 /// </summary>
 public sealed class PlaybackManifest
 {
+    public string Bvid { get; init; } = string.Empty;
+
     public long Aid { get; init; }
+
+    public long Cid { get; init; }
+
+    public int PageNumber { get; init; } = 1;
+
+    public IReadOnlyList<VideoPart> Parts { get; init; } = Array.Empty<VideoPart>();
 
     public long OwnerMid { get; init; }
 
@@ -54,6 +134,8 @@ public sealed class PlaybackManifest
     public IReadOnlyList<int> AvailableQualities { get; init; } = Array.Empty<int>();
 
     public IReadOnlyList<DanmakuComment> Danmaku { get; init; } = Array.Empty<DanmakuComment>();
+
+    public SubtitleSnapshot Subtitles { get; init; } = new();
 
     public VideoCommentSnapshot Comments { get; init; } = new();
 

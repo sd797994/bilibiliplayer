@@ -10,8 +10,12 @@ namespace BiliBiliPlayer.ViewModels;
 public sealed class MainViewModel : INotifyPropertyChanged
 {
     private const int RecommendationBatchSize = 18;
+    private const int WatchHistoryInitialTargetCount = 8;
+    private const int WatchHistoryInitialMaxPages = 4;
     private readonly BiliApiService _apiService;
+    private readonly BiliWatchHistoryService _watchHistoryService;
     private readonly SemaphoreSlim _loadGate = new(1, 1);
+    private readonly SemaphoreSlim _watchHistoryLoadGate = new(1, 1);
     private int _page = 1;
     private int _recommendationFreshIndex;
     private int _recommendationFreshIndexInHour;
@@ -30,25 +34,44 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _searchKeyword = string.Empty;
     private bool _isSearchMode;
     private UserProfile? _profile;
+    private WatchHistoryCursor? _watchHistoryCursor;
+    private bool _watchHistoryHasMore = true;
+    private bool _watchHistoryInitialized;
+    private bool _isWatchHistoryOpen;
+    private bool _isWatchHistoryBusy;
+    private bool _isWatchHistoryLoadingMore;
+    private string _watchHistoryErrorMessage = string.Empty;
+    private int _watchHistoryGeneration;
 
-    public MainViewModel(BiliApiService apiService)
+    public MainViewModel(
+        BiliApiService apiService,
+        BiliWatchHistoryService? watchHistoryService = null)
     {
         _apiService = apiService;
+        _watchHistoryService = watchHistoryService ?? new BiliWatchHistoryService();
         _profile = BiliSessionStore.LoadProfile();
         RefreshCommand = new Command(async () => await RefreshAsync());
         LoadMoreCommand = new Command(async () => await LoadMoreAsync());
         RetryCommand = new Command(async () => await RefreshAsync());
+        WatchHistoryLoadMoreCommand = new Command(async () => await LoadMoreWatchHistoryAsync());
+        WatchHistoryRetryCommand = new Command(async () => await ReloadWatchHistoryAsync());
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ObservableCollection<VideoItem> Videos { get; } = [];
 
+    public ObservableCollection<WatchHistoryItem> WatchHistory { get; } = [];
+
     public ICommand RefreshCommand { get; }
 
     public ICommand LoadMoreCommand { get; }
 
     public ICommand RetryCommand { get; }
+
+    public ICommand WatchHistoryLoadMoreCommand { get; }
+
+    public ICommand WatchHistoryRetryCommand { get; }
 
     public bool IsBusy
     {
@@ -100,6 +123,72 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public bool IsLoggedIn => _profile is not null;
 
+    public bool CanShowWatchHistory =>
+        _profile is not null && !string.IsNullOrWhiteSpace(_cookieHeader);
+
+    public bool IsWatchHistoryOpen
+    {
+        get => _isWatchHistoryOpen;
+        private set => SetProperty(ref _isWatchHistoryOpen, value);
+    }
+
+    public bool IsWatchHistoryBusy
+    {
+        get => _isWatchHistoryBusy;
+        private set
+        {
+            if (SetProperty(ref _isWatchHistoryBusy, value))
+            {
+                RaiseWatchHistoryStateProperties();
+            }
+        }
+    }
+
+    public bool IsWatchHistoryLoadingMore
+    {
+        get => _isWatchHistoryLoadingMore;
+        private set
+        {
+            if (SetProperty(ref _isWatchHistoryLoadingMore, value))
+            {
+                RaiseWatchHistoryStateProperties();
+            }
+        }
+    }
+
+    public string WatchHistoryErrorMessage
+    {
+        get => _watchHistoryErrorMessage;
+        private set
+        {
+            if (SetProperty(ref _watchHistoryErrorMessage, value))
+            {
+                RaiseWatchHistoryStateProperties();
+            }
+        }
+    }
+
+    public bool ShowWatchHistoryContent => WatchHistory.Count > 0;
+
+    public bool ShowWatchHistoryEmpty =>
+        !IsWatchHistoryBusy && WatchHistory.Count == 0 &&
+        string.IsNullOrWhiteSpace(WatchHistoryErrorMessage);
+
+    public bool ShowWatchHistoryError =>
+        !IsWatchHistoryBusy && WatchHistory.Count == 0 &&
+        !string.IsNullOrWhiteSpace(WatchHistoryErrorMessage);
+
+    public bool ShowWatchHistoryFooter =>
+        WatchHistory.Count > 0 && !IsWatchHistoryBusy;
+
+    public string WatchHistoryFooterText => IsWatchHistoryLoadingMore
+        ? "正在加载更多…"
+        : !string.IsNullOrWhiteSpace(WatchHistoryErrorMessage)
+            ? "加载更多失败，继续滚动可重试"
+            : _watchHistoryHasMore
+                ? "继续向下滚动加载更多"
+                : "已经到底了";
+
     public string CookieHeader => _cookieHeader;
 
     public bool HasAvatar => !string.IsNullOrWhiteSpace(_profile?.AvatarUrl);
@@ -141,6 +230,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _profile = profile;
         _cookieHeader = cookieHeader;
         ResetRecommendationCursors();
+        ResetWatchHistoryState();
 
         if (profile is null)
         {
@@ -185,9 +275,155 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _profile = null;
         _cookieHeader = string.Empty;
         ResetRecommendationCursors();
+        ResetWatchHistoryState();
         BiliSessionStore.ClearProfile();
         UpdateFeedCaption();
         RaiseAccountProperties();
+    }
+
+    public async Task OpenWatchHistoryAsync()
+    {
+        if (!CanShowWatchHistory)
+        {
+            return;
+        }
+
+        IsWatchHistoryOpen = true;
+        if (!_watchHistoryInitialized && !IsWatchHistoryBusy)
+        {
+            await ReloadWatchHistoryAsync();
+        }
+    }
+
+    public void CloseWatchHistory() => IsWatchHistoryOpen = false;
+
+    public void InvalidateWatchHistory()
+    {
+        _watchHistoryGeneration = NextPositiveCounter(_watchHistoryGeneration);
+        _watchHistoryCursor = null;
+        _watchHistoryHasMore = true;
+        _watchHistoryInitialized = false;
+        WatchHistoryErrorMessage = string.Empty;
+        RaiseWatchHistoryStateProperties();
+    }
+
+    private async Task ReloadWatchHistoryAsync()
+    {
+        if (!CanShowWatchHistory || !await _watchHistoryLoadGate.WaitAsync(0))
+        {
+            return;
+        }
+
+        var generation = _watchHistoryGeneration;
+        var cookieHeader = _cookieHeader;
+        IsWatchHistoryBusy = true;
+        WatchHistoryErrorMessage = string.Empty;
+        _watchHistoryCursor = null;
+        _watchHistoryHasMore = true;
+        WatchHistory.Clear();
+        RaiseWatchHistoryStateProperties();
+        try
+        {
+            var existing = new HashSet<(string Bvid, long Cid, long ViewedAt)>();
+            for (var attempt = 0;
+                 attempt < WatchHistoryInitialMaxPages &&
+                 _watchHistoryHasMore &&
+                 WatchHistory.Count < WatchHistoryInitialTargetCount;
+                 attempt++)
+            {
+                var page = await _watchHistoryService.GetPageAsync(
+                    cookieHeader,
+                    _watchHistoryCursor);
+                if (generation != _watchHistoryGeneration || cookieHeader != _cookieHeader)
+                {
+                    return;
+                }
+
+                foreach (var item in page.Items)
+                {
+                    if (existing.Add((item.Bvid, item.Cid, item.ViewedAt)))
+                    {
+                        WatchHistory.Add(item);
+                    }
+                }
+
+                _watchHistoryCursor = page.NextCursor;
+                _watchHistoryHasMore = page.HasMore;
+            }
+
+            _watchHistoryInitialized = true;
+        }
+        catch (BiliWatchHistoryException exception)
+        {
+            WatchHistoryErrorMessage = exception.Code is -101 or -111
+                ? "登录状态已失效，请重新登录"
+                : $"历史记录暂时无法读取：{exception.Message}";
+        }
+        catch (TaskCanceledException)
+        {
+            WatchHistoryErrorMessage = "读取历史记录超时，请稍后重试";
+        }
+        catch (HttpRequestException)
+        {
+            WatchHistoryErrorMessage = "无法连接到哔哩哔哩，请检查网络";
+        }
+        catch
+        {
+            WatchHistoryErrorMessage = "历史记录暂时无法读取，请稍后重试";
+        }
+        finally
+        {
+            IsWatchHistoryBusy = false;
+            RaiseWatchHistoryStateProperties();
+            _watchHistoryLoadGate.Release();
+        }
+    }
+
+    private async Task LoadMoreWatchHistoryAsync()
+    {
+        if (!CanShowWatchHistory || !_watchHistoryInitialized || !_watchHistoryHasMore ||
+            WatchHistory.Count == 0 || !await _watchHistoryLoadGate.WaitAsync(0))
+        {
+            return;
+        }
+
+        var generation = _watchHistoryGeneration;
+        var cookieHeader = _cookieHeader;
+        var cursor = _watchHistoryCursor;
+        IsWatchHistoryLoadingMore = true;
+        WatchHistoryErrorMessage = string.Empty;
+        try
+        {
+            var page = await _watchHistoryService.GetPageAsync(cookieHeader, cursor);
+            if (generation != _watchHistoryGeneration || cookieHeader != _cookieHeader)
+            {
+                return;
+            }
+
+            var existing = WatchHistory
+                .Select(item => (item.Bvid, item.Cid, item.ViewedAt))
+                .ToHashSet();
+            foreach (var item in page.Items)
+            {
+                if (existing.Add((item.Bvid, item.Cid, item.ViewedAt)))
+                {
+                    WatchHistory.Add(item);
+                }
+            }
+
+            _watchHistoryCursor = page.NextCursor;
+            _watchHistoryHasMore = page.HasMore;
+        }
+        catch
+        {
+            WatchHistoryErrorMessage = "加载更多失败";
+        }
+        finally
+        {
+            IsWatchHistoryLoadingMore = false;
+            RaiseWatchHistoryStateProperties();
+            _watchHistoryLoadGate.Release();
+        }
     }
 
     private async Task RefreshAsync()
@@ -444,6 +680,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _recommendationHourStartedAt = DateTimeOffset.UtcNow;
     }
 
+    private void ResetWatchHistoryState()
+    {
+        _watchHistoryGeneration = NextPositiveCounter(_watchHistoryGeneration);
+        _watchHistoryCursor = null;
+        _watchHistoryHasMore = true;
+        _watchHistoryInitialized = false;
+        IsWatchHistoryOpen = false;
+        IsWatchHistoryBusy = false;
+        IsWatchHistoryLoadingMore = false;
+        WatchHistoryErrorMessage = string.Empty;
+        WatchHistory.Clear();
+        RaiseWatchHistoryStateProperties();
+    }
+
     private static int NextPositiveCounter(int current) =>
         current == int.MaxValue ? 1 : current + 1;
 
@@ -483,6 +733,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void RaiseAccountProperties()
     {
         OnPropertyChanged(nameof(IsLoggedIn));
+        OnPropertyChanged(nameof(CanShowWatchHistory));
         OnPropertyChanged(nameof(HasAvatar));
         OnPropertyChanged(nameof(ShowAvatarFallback));
         OnPropertyChanged(nameof(AvatarUrl));
@@ -490,6 +741,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(AccountTitle));
         OnPropertyChanged(nameof(AccountSubtitle));
         OnPropertyChanged(nameof(AccountActionText));
+    }
+
+    private void RaiseWatchHistoryStateProperties()
+    {
+        OnPropertyChanged(nameof(ShowWatchHistoryContent));
+        OnPropertyChanged(nameof(ShowWatchHistoryEmpty));
+        OnPropertyChanged(nameof(ShowWatchHistoryError));
+        OnPropertyChanged(nameof(ShowWatchHistoryFooter));
+        OnPropertyChanged(nameof(WatchHistoryFooterText));
     }
 
     private bool SetProperty<T>(ref T storage, T value, [CallerMemberName] string? propertyName = null)

@@ -9,14 +9,14 @@ public partial class MainPage : ContentPage
 {
     private const double PullRefreshThreshold = 82;
     private const double PullRefreshMaxDistance = 116;
-    private const double PullRefreshRestingDistance = 64;
     private readonly BiliApiService _apiService = new();
     private readonly MainViewModel _viewModel;
+    private CancellationTokenSource? _watchHistoryCloseCancellation;
     private bool _initialized;
     private bool _isHomeActive;
 #if WINDOWS
-    private Microsoft.UI.Input.InputKeyboardSource? _keyboardSource;
     private Microsoft.UI.Xaml.Controls.ScrollViewer? _feedScrollViewer;
+    private Microsoft.UI.Xaml.Controls.ScrollViewer? _watchHistoryScrollViewer;
     private Microsoft.UI.Xaml.UIElement? _feedPointerSurface;
     private readonly Microsoft.UI.Xaml.Input.PointerEventHandler _feedPointerPressedHandler;
     private readonly Microsoft.UI.Xaml.Input.PointerEventHandler _feedPointerMovedHandler;
@@ -28,6 +28,7 @@ public partial class MainPage : ContentPage
     private uint _pullPointerId;
     private double _pullStartX;
     private double _pullStartY;
+    private double _pullDistance;
 #endif
 
     public MainPage()
@@ -48,16 +49,22 @@ public partial class MainPage : ContentPage
         base.OnAppearing();
         _isHomeActive = true;
 
-#if WINDOWS
-        AttachWindowKeyboardSource();
-#endif
-
         if (_initialized)
         {
+            // Returning from the player can add a new record to the signed-in account.
+            // Keep the old collection hidden for now and fetch a fresh first page on hover.
+            _viewModel.InvalidateWatchHistory();
             return;
         }
 
         _initialized = true;
+#if DEBUG && WINDOWS
+        if (Diagnostics.NativePlaybackSmoke.IsRequested)
+        {
+            await Diagnostics.NativePlaybackSmoke.RunAsync(this);
+            return;
+        }
+#endif
         var cookieHeader = await WebViewCookieBridge.GetBilibiliCookieHeaderAsync(SessionWebView);
         var profile = BiliSessionStore.LoadProfile();
 
@@ -80,6 +87,8 @@ public partial class MainPage : ContentPage
     protected override void OnDisappearing()
     {
         _isHomeActive = false;
+        CancelWatchHistoryClose();
+        _viewModel.CloseWatchHistory();
         base.OnDisappearing();
     }
 
@@ -90,59 +99,11 @@ public partial class MainPage : ContentPage
 #if WINDOWS
         if (Handler is null)
         {
-            DetachWindowKeyboardSource();
             DetachFeedNativeHandlers();
-        }
-        else
-        {
-            AttachWindowKeyboardSource();
+            DetachWatchHistoryNativeScroll();
         }
 #endif
     }
-
-#if WINDOWS
-    private void OnWindowKeyDown(
-        Microsoft.UI.Input.InputKeyboardSource sender,
-        Microsoft.UI.Input.KeyEventArgs args)
-    {
-        if (args.VirtualKey != Windows.System.VirtualKey.F5 ||
-            !_isHomeActive ||
-            Navigation.ModalStack.Count != 0)
-        {
-            return;
-        }
-
-        args.Handled = true;
-        Dispatcher.Dispatch(async () => await _viewModel.ReloadAsync());
-    }
-
-    private void AttachWindowKeyboardSource()
-    {
-        if (_keyboardSource is not null ||
-            Handler?.PlatformView is not Microsoft.UI.Xaml.UIElement platformView ||
-            platformView.XamlRoot?.ContentIsland is not { } contentIsland)
-        {
-            return;
-        }
-
-        _keyboardSource = Microsoft.UI.Input.InputKeyboardSource.GetForIsland(contentIsland);
-        if (_keyboardSource is not null)
-        {
-            _keyboardSource.KeyDown += OnWindowKeyDown;
-        }
-    }
-
-    private void DetachWindowKeyboardSource()
-    {
-        if (_keyboardSource is null)
-        {
-            return;
-        }
-
-        _keyboardSource.KeyDown -= OnWindowKeyDown;
-        _keyboardSource = null;
-    }
-#endif
 
     private void OnFeedScrolled(object? sender, ItemsViewScrolledEventArgs e)
     {
@@ -159,8 +120,6 @@ public partial class MainPage : ContentPage
 #if WINDOWS
     private async void OnFeedCollectionLoaded(object? sender, EventArgs e)
     {
-        AttachWindowKeyboardSource();
-
         for (var attempt = 0; attempt < 6; attempt++)
         {
             if (FeedCollectionView.Handler?.PlatformView is Microsoft.UI.Xaml.UIElement root)
@@ -248,6 +207,17 @@ public partial class MainPage : ContentPage
         DetachPullToRefresh();
     }
 
+    private void DetachWatchHistoryNativeScroll()
+    {
+        if (_watchHistoryScrollViewer is null)
+        {
+            return;
+        }
+
+        _watchHistoryScrollViewer.ViewChanged -= OnWatchHistoryScrollViewerViewChanged;
+        _watchHistoryScrollViewer = null;
+    }
+
     private void OnFeedPointerPressed(
         object sender,
         Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -256,8 +226,6 @@ public partial class MainPage : ContentPage
             _isPullRefreshRunning ||
             _viewModel.IsRefreshing ||
             _feedPointerSurface is null ||
-            _feedScrollViewer is null ||
-            _feedScrollViewer.VerticalOffset > 0.5 ||
             Navigation.ModalStack.Count != 0)
         {
             return;
@@ -271,6 +239,7 @@ public partial class MainPage : ContentPage
 
         _isPullPointerDown = true;
         _isPullDragging = false;
+        _pullDistance = 0;
         _pullPointerId = e.Pointer.PointerId;
         _pullStartX = point.Position.X;
         _pullStartY = point.Position.Y;
@@ -333,8 +302,7 @@ public partial class MainPage : ContentPage
             return;
         }
 
-        var shouldRefresh =
-            _isPullDragging && FeedCollectionView.TranslationY >= PullRefreshThreshold;
+        var shouldRefresh = _isPullDragging && _pullDistance >= PullRefreshThreshold;
         var wasDragging = _isPullDragging;
         ResetPullTracking();
         _feedPointerSurface?.ReleasePointerCapture(e.Pointer);
@@ -382,9 +350,10 @@ public partial class MainPage : ContentPage
 
     private void UpdatePullVisual(double pullDistance)
     {
+        _pullDistance = pullDistance;
+        // The indicator reaches full opacity at the same point that releasing triggers refresh.
         var progress = Math.Clamp(pullDistance / PullRefreshThreshold, 0, 1);
-        FeedCollectionView.TranslationY = pullDistance;
-        PullRefreshIndicator.Opacity = Math.Clamp((pullDistance - 8) / 48, 0, 1);
+        PullRefreshIndicator.Opacity = progress;
         PullRefreshIndicator.Scale = 0.72 + (0.28 * progress);
         PullRefreshIndicator.TranslationY = -10 + (10 * progress);
         PullRefreshIcon.Rotation = -100 + (240 * progress);
@@ -400,11 +369,10 @@ public partial class MainPage : ContentPage
         _isPullRefreshRunning = true;
         try
         {
-            await FeedCollectionView.TranslateTo(
-                0,
-                PullRefreshRestingDistance,
-                140,
-                Easing.CubicOut);
+            await Task.WhenAll(
+                PullRefreshIndicator.FadeTo(1, 100, Easing.CubicOut),
+                PullRefreshIndicator.ScaleTo(1, 100, Easing.CubicOut),
+                PullRefreshIndicator.TranslateTo(0, 0, 100, Easing.CubicOut));
 
             var reloadTask = _viewModel.ReloadAsync();
             while (!reloadTask.IsCompleted)
@@ -428,9 +396,10 @@ public partial class MainPage : ContentPage
     private async Task ResetPullVisualAsync()
     {
         await Task.WhenAll(
-            FeedCollectionView.TranslateTo(0, 0, 220, Easing.CubicOut),
             PullRefreshIndicator.FadeTo(0, 180, Easing.CubicIn),
-            PullRefreshIndicator.ScaleTo(0.72, 180, Easing.CubicIn));
+            PullRefreshIndicator.ScaleTo(0.72, 180, Easing.CubicIn),
+            PullRefreshIndicator.TranslateTo(0, -10, 180, Easing.CubicIn));
+        _pullDistance = 0;
         PullRefreshIndicator.TranslationY = -10;
         PullRefreshIcon.Rotation = -100;
     }
@@ -453,6 +422,59 @@ public partial class MainPage : ContentPage
         if (remainingHeight <= preloadDistance)
         {
             RequestMoreVideos();
+        }
+    }
+
+    private async Task EnsureWatchHistoryNativeScrollAsync()
+    {
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            if (WatchHistoryCollectionView.Handler?.PlatformView is Microsoft.UI.Xaml.UIElement root)
+            {
+                var scrollViewer =
+                    FindDescendant<Microsoft.UI.Xaml.Controls.ScrollViewer>(root);
+                if (scrollViewer is not null)
+                {
+                    if (!ReferenceEquals(_watchHistoryScrollViewer, scrollViewer))
+                    {
+                        DetachWatchHistoryNativeScroll();
+                        _watchHistoryScrollViewer = scrollViewer;
+                        _watchHistoryScrollViewer.ViewChanged +=
+                            OnWatchHistoryScrollViewerViewChanged;
+                    }
+
+                    CheckWatchHistoryNativeScrollPosition();
+                    return;
+                }
+            }
+
+            await Task.Delay(100);
+        }
+    }
+
+    private void OnWatchHistoryScrollViewerViewChanged(
+        object? sender,
+        Microsoft.UI.Xaml.Controls.ScrollViewerViewChangedEventArgs e) =>
+        CheckWatchHistoryNativeScrollPosition();
+
+    private void CheckWatchHistoryNativeScrollPosition()
+    {
+        if (!_isHomeActive ||
+            !_viewModel.IsWatchHistoryOpen ||
+            _watchHistoryScrollViewer is null)
+        {
+            return;
+        }
+
+        var remainingHeight =
+            _watchHistoryScrollViewer.ScrollableHeight -
+            _watchHistoryScrollViewer.VerticalOffset;
+        var preloadDistance = Math.Max(
+            220,
+            _watchHistoryScrollViewer.ViewportHeight * 0.6);
+        if (remainingHeight <= preloadDistance)
+        {
+            RequestMoreWatchHistory();
         }
     }
 
@@ -483,6 +505,20 @@ public partial class MainPage : ContentPage
     }
 #endif
 
+    private void OnWatchHistoryCollectionLoaded(object? sender, EventArgs e)
+    {
+#if WINDOWS
+        _ = EnsureWatchHistoryNativeScrollAsync();
+#endif
+    }
+
+    private void OnWatchHistoryCollectionUnloaded(object? sender, EventArgs e)
+    {
+#if WINDOWS
+        DetachWatchHistoryNativeScroll();
+#endif
+    }
+
     private void OnFeedCollectionUnloaded(object? sender, EventArgs e)
     {
 #if WINDOWS
@@ -501,7 +537,22 @@ public partial class MainPage : ContentPage
     private async void OnSearchCompleted(object? sender, EventArgs e)
     {
         SearchEntry.Unfocus();
-        await _viewModel.SearchAsync(SearchEntry.Text ?? string.Empty);
+        await SearchAndScrollToTopAsync(SearchEntry.Text ?? string.Empty);
+    }
+
+    private async void OnSearchTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.OldTextValue) || !string.IsNullOrEmpty(e.NewTextValue))
+        {
+            return;
+        }
+
+        await SearchAndScrollToTopAsync(string.Empty);
+    }
+
+    private async Task SearchAndScrollToTopAsync(string keyword)
+    {
+        await _viewModel.SearchAsync(keyword);
 
         if (_viewModel.Videos.Count > 0)
         {
@@ -516,11 +567,104 @@ public partial class MainPage : ContentPage
             return;
         }
 
+        _viewModel.InvalidateWatchHistory();
         await Navigation.PushModalAsync(new PlayerPage(video, _viewModel.CookieHeader));
+    }
+
+    private async void OnAccountPointerEntered(object? sender, PointerEventArgs e)
+    {
+        CancelWatchHistoryClose();
+        if (_viewModel.CanShowWatchHistory)
+        {
+            await _viewModel.OpenWatchHistoryAsync();
+#if WINDOWS
+            await EnsureWatchHistoryNativeScrollAsync();
+#endif
+        }
+    }
+
+    private void OnAccountPointerExited(object? sender, PointerEventArgs e) =>
+        ScheduleWatchHistoryClose();
+
+    private void OnWatchHistoryPointerEntered(object? sender, PointerEventArgs e) =>
+        CancelWatchHistoryClose();
+
+    private void OnWatchHistoryPointerExited(object? sender, PointerEventArgs e) =>
+        ScheduleWatchHistoryClose();
+
+    private void OnWatchHistoryScrolled(object? sender, ItemsViewScrolledEventArgs e)
+    {
+        if (e.LastVisibleItemIndex >= 0 &&
+            e.LastVisibleItemIndex >= _viewModel.WatchHistory.Count - 4)
+        {
+            RequestMoreWatchHistory();
+        }
+    }
+
+    private async void OnWatchHistoryItemTapped(object? sender, TappedEventArgs e)
+    {
+        if (e.Parameter is not WatchHistoryItem item)
+        {
+            return;
+        }
+
+        CancelWatchHistoryClose();
+        _viewModel.CloseWatchHistory();
+        _viewModel.InvalidateWatchHistory();
+        await Navigation.PushModalAsync(new PlayerPage(item.ToVideoItem(), _viewModel.CookieHeader));
+    }
+
+    private void RequestMoreWatchHistory()
+    {
+        if (_viewModel.WatchHistoryLoadMoreCommand.CanExecute(null))
+        {
+            _viewModel.WatchHistoryLoadMoreCommand.Execute(null);
+        }
+    }
+
+    private void ScheduleWatchHistoryClose()
+    {
+        CancelWatchHistoryClose();
+        var cancellation = new CancellationTokenSource();
+        _watchHistoryCloseCancellation = cancellation;
+        _ = CloseWatchHistoryAfterDelayAsync(cancellation);
+    }
+
+    private async Task CloseWatchHistoryAfterDelayAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(180, cancellation.Token);
+            if (!cancellation.IsCancellationRequested)
+            {
+                _viewModel.CloseWatchHistory();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_watchHistoryCloseCancellation, cancellation))
+            {
+                _watchHistoryCloseCancellation = null;
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private void CancelWatchHistoryClose()
+    {
+        var cancellation = _watchHistoryCloseCancellation;
+        _watchHistoryCloseCancellation = null;
+        cancellation?.Cancel();
     }
 
     private async void OnAccountTapped(object? sender, TappedEventArgs e)
     {
+        CancelWatchHistoryClose();
+        _viewModel.CloseWatchHistory();
         if (_viewModel.IsLoggedIn)
         {
             var shouldLogout = await DisplayAlert(

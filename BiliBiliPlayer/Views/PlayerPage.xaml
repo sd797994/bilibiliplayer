@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:services="clr-namespace:BiliBiliPlayer.Services"
              x:Class="BiliBiliPlayer.Views.PlayerPage"
              BackgroundColor="#08090C"
              Shell.NavBarIsVisible="False">
@@ -40,11 +41,18 @@
             <HorizontalStackLayout Grid.Column="2"
                                    Spacing="8"
                                    VerticalOptions="Center">
-                <Label x:Name="PlaybackStatusLabel"
-                       Text="解析中"
-                       TextColor="#777D89"
-                       FontSize="10"
-                       VerticalTextAlignment="Center" />
+                <Button x:Name="OpenWebButton"
+                        Text="打开到网页"
+                        Clicked="OnOpenWebClicked"
+                        WidthRequest="96"
+                        HeightRequest="36"
+                        Padding="10,0"
+                        FontSize="12"
+                        BackgroundColor="#20232B"
+                        TextColor="#EDEFF3"
+                        BorderColor="#30343E"
+                        BorderWidth="1"
+                        CornerRadius="10" />
                 <Button x:Name="DanmakuButton"
                         Text="弹幕"
                         Clicked="OnDanmakuClicked"
@@ -213,8 +221,9 @@
                 </BoxView.GestureRecognizers>
             </BoxView>
 
-            <Border MaximumWidthRequest="380"
-                    Padding="18"
+            <Border MaximumWidthRequest="440"
+                    MaximumHeightRequest="780"
+                    Padding="16"
                     HorizontalOptions="Center"
                     VerticalOptions="Center"
                     BackgroundColor="#F21A1D23"
@@ -223,7 +232,7 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="16" />
                 </Border.StrokeShape>
-                <VerticalStackLayout Spacing="12">
+                <VerticalStackLayout Spacing="10">
                     <Grid ColumnDefinitions="*,Auto">
                         <VerticalStackLayout Spacing="2"
                                              VerticalOptions="Center">
@@ -256,7 +265,7 @@
                             <RoundRectangle CornerRadius="12" />
                         </Border.StrokeShape>
                         <Grid RowDefinitions="Auto,*">
-                            <Grid HeightRequest="168">
+                            <Grid HeightRequest="132">
                                 <Image x:Name="ShareCoverImage"
                                        Aspect="AspectFill"
                                        BackgroundColor="#1A1C22" />
@@ -297,8 +306,106 @@
                         </Grid>
                     </Border>
 
+                    <Grid ColumnDefinitions="*,Auto,Auto"
+                          ColumnSpacing="8">
+                        <Label Text="最近联系人"
+                               TextColor="#EDEFF3"
+                               FontSize="13"
+                               FontAttributes="Bold"
+                               VerticalTextAlignment="Center" />
+                        <Label x:Name="ShareContactsStatusLabel"
+                               Grid.Column="1"
+                               Text="未读取"
+                               TextColor="#8A909C"
+                               FontSize="11"
+                               VerticalTextAlignment="Center" />
+                        <Button x:Name="RefreshShareContactsButton"
+                                Grid.Column="2"
+                                Text="刷新"
+                                Clicked="OnRefreshShareContactsClicked"
+                                HeightRequest="30"
+                                Padding="10,0"
+                                FontSize="11"
+                                BackgroundColor="#2B2F38"
+                                TextColor="#DDE0E6"
+                                CornerRadius="8" />
+                    </Grid>
+
+                    <CollectionView x:Name="ShareContactsView"
+                                    HeightRequest="168"
+                                    SelectionMode="Single"
+                                    SelectionChanged="OnShareContactSelectionChanged"
+                                    VerticalScrollBarVisibility="Always">
+                        <CollectionView.EmptyView>
+                            <Grid HeightRequest="168">
+                                <Label Text="暂无可选联系人"
+                                       TextColor="#717783"
+                                       FontSize="12"
+                                       HorizontalOptions="Center"
+                                       VerticalOptions="Center" />
+                            </Grid>
+                        </CollectionView.EmptyView>
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="services:WeChatShareContact">
+                                <Border Margin="0,0,0,5"
+                                        Padding="9,7"
+                                        BackgroundColor="#23262E"
+                                        Stroke="#333741"
+                                        StrokeThickness="1">
+                                    <Border.StrokeShape>
+                                        <RoundRectangle CornerRadius="9" />
+                                    </Border.StrokeShape>
+                                    <VisualStateManager.VisualStateGroups>
+                                        <VisualStateGroup Name="CommonStates">
+                                            <VisualState Name="Normal" />
+                                            <VisualState Name="Selected">
+                                                <VisualState.Setters>
+                                                    <Setter Property="BackgroundColor" Value="#3A2732" />
+                                                    <Setter Property="Stroke" Value="#FB7299" />
+                                                </VisualState.Setters>
+                                            </VisualState>
+                                        </VisualStateGroup>
+                                    </VisualStateManager.VisualStateGroups>
+                                    <Grid ColumnDefinitions="36,*,Auto"
+                                          ColumnSpacing="10">
+                                        <Border WidthRequest="36"
+                                                HeightRequest="36"
+                                                BackgroundColor="#343943"
+                                                StrokeThickness="0">
+                                            <Border.StrokeShape>
+                                                <RoundRectangle CornerRadius="18" />
+                                            </Border.StrokeShape>
+                                            <Grid>
+                                                <Label Text="{Binding AvatarText}"
+                                                       TextColor="#DDE0E6"
+                                                       FontSize="13"
+                                                       FontAttributes="Bold"
+                                                       HorizontalTextAlignment="Center"
+                                                       VerticalTextAlignment="Center" />
+                                                <Image Source="{Binding AvatarUrl}"
+                                                       Aspect="AspectFill" />
+                                            </Grid>
+                                        </Border>
+                                        <Label Grid.Column="1"
+                                               Text="{Binding DisplayName}"
+                                               TextColor="#F2F3F5"
+                                               FontSize="13"
+                                               LineBreakMode="TailTruncation"
+                                               MaxLines="1"
+                                               VerticalTextAlignment="Center" />
+                                        <Label Grid.Column="2"
+                                               Text="{Binding KindText}"
+                                               TextColor="#8A909C"
+                                               FontSize="10"
+                                               VerticalTextAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+
                     <Label x:Name="ShareHintLabel"
-                           Text="将直接发送到固定微信群。"
+                           Text="请选择接收卡片的联系人或群聊。"
                            TextColor="#9AA0AC"
                            FontSize="11"
                            LineBreakMode="WordWrap" />
@@ -323,8 +430,9 @@
                     </Border>
 
                     <Button x:Name="ShareToWeChatButton"
-                            Text="发送到微信群"
+                            Text="发送给所选联系人"
                             Clicked="OnShareToWeChatClicked"
+                            IsEnabled="False"
                             HeightRequest="40"
                             FontSize="13"
                             BackgroundColor="#FB7299"

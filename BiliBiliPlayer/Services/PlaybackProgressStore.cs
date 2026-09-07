@@ -11,28 +11,33 @@ public static class PlaybackProgressStore
     private const double RestartThresholdSeconds = 3d;
     private const double CompletionThresholdSeconds = 10d;
 
-    private static readonly ConcurrentDictionary<string, double> Positions =
-        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<(string Bvid, long Cid), double> Positions = new();
+    private static readonly ConcurrentDictionary<string, int> LastPages = new(StringComparer.Ordinal);
 
-    public static double GetPosition(string bvid)
+    public static int GetPageNumber(string bvid) =>
+        !string.IsNullOrWhiteSpace(bvid) && LastPages.TryGetValue(bvid, out var page) ? page : 1;
+
+    public static double GetPosition(string bvid, long cid)
     {
-        if (string.IsNullOrWhiteSpace(bvid))
+        if (string.IsNullOrWhiteSpace(bvid) || cid <= 0)
         {
             return 0d;
         }
 
-        return Positions.TryGetValue(bvid, out var position)
+        return Positions.TryGetValue((bvid, cid), out var position)
             ? Math.Max(0d, position)
             : 0d;
     }
 
     public static void SavePosition(
         string bvid,
+        long cid,
+        int pageNumber,
         double position,
         double duration,
         bool ended)
     {
-        if (string.IsNullOrWhiteSpace(bvid) ||
+        if (string.IsNullOrWhiteSpace(bvid) || cid <= 0 || pageNumber <= 0 ||
             !double.IsFinite(position) ||
             !double.IsFinite(duration))
         {
@@ -41,6 +46,8 @@ public static class PlaybackProgressStore
 
         position = Math.Max(0d, position);
         duration = Math.Max(0d, duration);
+        var key = (bvid, cid);
+        LastPages[bvid] = pageNumber;
 
         // A zero duration means the media never became ready. Preserve an earlier useful
         // checkpoint instead of replacing it because the user closed during resolution.
@@ -48,7 +55,7 @@ public static class PlaybackProgressStore
         {
             if (position >= RestartThresholdSeconds)
             {
-                Positions[bvid] = position;
+                Positions[key] = position;
             }
 
             return;
@@ -57,10 +64,10 @@ public static class PlaybackProgressStore
         var reachedEnd = ended || duration - position <= CompletionThresholdSeconds;
         if (position < RestartThresholdSeconds || reachedEnd)
         {
-            Positions.TryRemove(bvid, out _);
+            Positions.TryRemove(key, out _);
             return;
         }
 
-        Positions[bvid] = Math.Min(position, duration);
+        Positions[key] = Math.Min(position, duration);
     }
 }

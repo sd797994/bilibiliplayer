@@ -16,7 +16,8 @@ public sealed class BiliPlaybackResolver
         WebView resolverWebView,
         string bvid,
         int maximumQuality = 80,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int pageNumber = 1)
     {
 #if WINDOWS
         await _gate.WaitAsync(cancellationToken);
@@ -32,11 +33,17 @@ public sealed class BiliPlaybackResolver
             // website player can never leak audio during the resolution window.
             core.IsMuted = true;
 
-            var context = await ReadVideoContextAsync(core, bvid, cancellationToken);
+            var context = await ReadVideoContextAsync(core, bvid, pageNumber, cancellationToken);
 
             // Danmaku uses the same logged-in page session as playurl. Fetch it in parallel so
             // opening a video is still gated on the slower of the two, not their sum.
             var danmakuTask = FetchDanmakuInPageAsync(core, context.Cid, cancellationToken);
+            var subtitlesTask = FetchSubtitlesInPageAsync(
+                core,
+                context.Bvid,
+                context.Aid,
+                context.Cid,
+                cancellationToken);
             var commentsTask = FetchCommentsInPageAsync(
                 core,
                 context.Aid,
@@ -87,7 +94,7 @@ public sealed class BiliPlaybackResolver
             // Fallback to the play information already produced by Bilibili's own page.
             if (manifest is null)
             {
-                var pagePlayInfoJson = await TryReadPagePlayInfoAsync(core);
+                var pagePlayInfoJson = await TryReadPagePlayInfoAsync(core, context);
                 if (!string.IsNullOrWhiteSpace(pagePlayInfoJson))
                 {
                     manifest = ParsePlaybackManifest(pagePlayInfoJson, maximumQuality);
@@ -101,6 +108,13 @@ public sealed class BiliPlaybackResolver
             }
 
             IReadOnlyList<DanmakuComment> danmaku = Array.Empty<DanmakuComment>();
+            var subtitles = new SubtitleSnapshot
+            {
+                Bvid = context.Bvid,
+                Aid = context.Aid,
+                Cid = context.Cid,
+                Error = "字幕加载失败，请重新打开视频重试"
+            };
             var comments = new VideoCommentSnapshot { TotalCount = context.ReplyCount };
             try
             {
@@ -113,6 +127,19 @@ public sealed class BiliPlaybackResolver
             catch
             {
                 // Playback must not depend on danmaku. An empty list just hides the overlay.
+            }
+
+            try
+            {
+                subtitles = await subtitlesTask;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // Subtitles are optional and must never prevent video playback.
             }
 
             try
@@ -130,9 +157,14 @@ public sealed class BiliPlaybackResolver
 
             return WithCommunityData(
                 manifest,
+                context.Bvid,
                 context.Aid,
+                context.Cid,
+                context.PageNumber,
+                context.Parts,
                 context.OwnerMid,
                 danmaku,
+                subtitles,
                 comments);
         }
         finally
@@ -149,9 +181,11 @@ public sealed class BiliPlaybackResolver
     private static async Task<VideoContext> ReadVideoContextAsync(
         Microsoft.Web.WebView2.Core.CoreWebView2 core,
         string bvid,
+        int pageNumber,
         CancellationToken cancellationToken)
     {
-        core.Navigate($"https://www.bilibili.com/video/{Uri.EscapeDataString(bvid)}/?autoplay=0");
+        pageNumber = Math.Max(1, pageNumber);
+        core.Navigate($"https://www.bilibili.com/video/{Uri.EscapeDataString(bvid)}/?p={pageNumber}&autoplay=0");
 
         for (var attempt = 0; attempt < 60; attempt++)
         {
@@ -160,7 +194,7 @@ public sealed class BiliPlaybackResolver
             try
             {
                 var raw = await core.ExecuteScriptAsync(
-                    """
+                    $$"""
                     (() => {
                         // CoreWebView2.IsMuted already silences this temporary resolver. Also
                         // pause media elements so the hidden page does not spend resources decoding.
@@ -172,14 +206,28 @@ public sealed class BiliPlaybackResolver
                         if (!state) return '';
                         const data = state.videoData ?? state.videoInfo;
                         if (!data) return '';
-                        const firstPage = Array.isArray(data.pages) ? data.pages[0] : null;
-                        const cid = data.cid ?? firstPage?.cid ?? state.cid;
+                        const parts = (Array.isArray(data.pages) ? data.pages : [])
+                            .map((item, index) => ({
+                                cid: Number(item.cid),
+                                page: Number(item.page) || index + 1,
+                                part: String(item.part || `P${index + 1}`),
+                                duration: Math.max(0, Number(item.duration) || 0)
+                            }))
+                            .filter(item => Number.isSafeInteger(item.cid) && item.cid > 0 &&
+                                Number.isSafeInteger(item.page) && item.page > 0);
+                        const selected = parts.find(item => item.page === {{pageNumber}}) ?? parts[0];
+                        // videoData.cid can still refer to P1 even on a ?p=2 page.
+                        const cid = selected?.cid ?? data.cid ?? state.cid;
+                        const pageNumber = selected?.page ?? 1;
+                        if (parts.length === 0 && cid) {
+                            parts.push({ cid, page: 1, part: String(data.title || '正片'), duration: Number(data.duration) || 0 });
+                        }
                         const aid = data.aid ?? data.id ?? 0;
                         const bvid = data.bvid ?? '';
                         const ownerMid = data.owner?.mid ?? 0;
                         const replyCount = data.stat?.reply ?? 0;
                         if (!cid || !bvid) return '';
-                        return JSON.stringify({ aid, cid, bvid, ownerMid, replyCount });
+                        return JSON.stringify({ aid, cid, bvid, pageNumber, parts, ownerMid, replyCount });
                     })()
                     """);
 
@@ -189,7 +237,9 @@ public sealed class BiliPlaybackResolver
                     var context = JsonSerializer.Deserialize<VideoContext>(
                         json,
                         new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    if (context is not null && context.Cid > 0)
+                    // ExecuteScriptAsync can still see the previous document during navigation.
+                    if (context is not null && context.Aid > 0 && context.Cid > 0 &&
+                        string.Equals(context.Bvid, bvid, StringComparison.Ordinal))
                     {
                         return context;
                     }
@@ -441,6 +491,231 @@ public sealed class BiliPlaybackResolver
         catch
         {
             return Array.Empty<DanmakuComment>();
+        }
+    }
+
+    private static async Task<SubtitleSnapshot> FetchSubtitlesInPageAsync(
+        Microsoft.Web.WebView2.Core.CoreWebView2 core,
+        string bvid,
+        long aid,
+        long cid,
+        CancellationToken cancellationToken)
+    {
+        SubtitleSnapshot Failure(string error) => new()
+        {
+            Bvid = bvid,
+            Aid = aid,
+            Cid = cid,
+            Error = error
+        };
+
+        if (string.IsNullOrWhiteSpace(bvid) || aid <= 0 || cid <= 0)
+        {
+            return Failure("无法确认字幕所属视频，已停止加载");
+        }
+
+        var requestId = Guid.NewGuid().ToString("N");
+        var prefix = $"BILI_SUBTITLES:{requestId}:";
+        var completion = new TaskCompletionSource<string?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void OnWebMessageReceived(
+            object? sender,
+            Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs args)
+        {
+            try
+            {
+                var message = args.TryGetWebMessageAsString();
+                if (!message.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                completion.TrySetResult(message[prefix.Length..]);
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetException(ex);
+            }
+        }
+
+        core.WebMessageReceived += OnWebMessageReceived;
+        try
+        {
+            var prefixJson = JsonSerializer.Serialize(prefix);
+            var bvidJson = JsonSerializer.Serialize(bvid);
+            var script = $$"""
+                (() => {
+                    const prefix = {{prefixJson}};
+                    const identity = { bvid: {{bvidJson}}, aid: {{aid}}, cid: {{cid}} };
+                    const mismatch = '字幕与当前视频不匹配，已阻止加载';
+                    const failed = '字幕加载失败，请重新打开视频重试';
+                    const post = payload => {
+                        try { chrome.webview.postMessage(prefix + JSON.stringify({ ...payload, ...identity })); } catch (_) {}
+                    };
+
+                    const readJson = async (url, authenticated = false) => {
+                        const controller = new AbortController();
+                        const timer = setTimeout(() => controller.abort(), 4000);
+                        try {
+                            const response = await fetch(url, {
+                                method: 'GET',
+                                // Only the API needs the login session. Subtitle CDN responses may
+                                // use Access-Control-Allow-Origin: *, which rejects credentialed reads.
+                                credentials: authenticated ? 'include' : 'omit',
+                                cache: 'no-store',
+                                signal: controller.signal
+                            });
+                            const text = await response.text();
+                            let payload;
+                            try { payload = JSON.parse(text.replace(/^\uFEFF/, '')); }
+                            catch (_) { throw new Error('字幕接口返回了无法识别的数据'); }
+                            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                            return payload;
+                        } finally {
+                            clearTimeout(timer);
+                        }
+                    };
+
+                    const verifiedUrl = value => {
+                        let valueText = String(value || '').trim();
+                        if (!valueText) throw new Error(failed);
+                        if (valueText.startsWith('//')) valueText = 'https:' + valueText;
+                        const url = new URL(valueText);
+                        if (url.protocol === 'http:') url.protocol = 'https:';
+                        if (url.protocol !== 'https:' || url.username || url.password || url.port ||
+                            !/(^|\.)(hdslb|bilibili)\.com$/i.test(url.hostname)) throw new Error(mismatch);
+
+                        // Current AI production filenames encode aid + cid + a 32-digit hash.
+                        // Reject a different video's file even when metadata claims our cid.
+                        const aiPrefix = '/bfs/ai_subtitle/prod/';
+                        if (url.pathname.startsWith(aiPrefix)) {
+                            const expected = new RegExp('^' + identity.aid + identity.cid + '[a-f0-9]{32}(?:\\.json)?$', 'i');
+                            if (!expected.test(url.pathname.slice(aiPrefix.length))) throw new Error(mismatch);
+                        }
+                        return url.href;
+                    };
+
+                    const readMetadata = async (url, requireIdentity) => {
+                        const payload = await readJson(url, true);
+                        if (Number(payload?.code) !== 0 || !payload?.data) throw new Error(failed);
+                        const data = payload.data;
+                        const returned = { bvid: data.bvid, aid: data.aid, cid: data.cid ?? data.oid };
+                        for (const key of ['bvid', 'aid', 'cid']) {
+                            if ((requireIdentity || returned[key] != null) &&
+                                String(returned[key]) !== String(identity[key])) throw new Error(mismatch);
+                        }
+                        return data;
+                    };
+
+                    const simplifyCues = body => {
+                        const cues = [];
+                        for (const item of Array.isArray(body) ? body : []) {
+                            const from = Number(item?.from);
+                            const rawTo = Number(item?.to);
+                            const content = String(item?.content || '').trim();
+                            if (!Number.isFinite(from) || !content) continue;
+                            const to = Number.isFinite(rawTo) && rawTo > from ? rawTo : from + 2;
+                            cues.push({
+                                f: Math.max(0, from),
+                                t: Math.max(0, to),
+                                c: content.slice(0, 500),
+                                l: Number(item?.location) || 2
+                            });
+                            if (cues.length >= 12000) break;
+                        }
+                        cues.sort((a, b) => a.f - b.f || a.t - b.t);
+                        return cues;
+                    };
+
+                    (async () => {
+                            // The legacy /x/player/v2 list can point at unrelated AI subtitles.
+                            // Read the cid-scoped subtitle configuration used by the DM service first.
+                            const dmParams = new URLSearchParams({ aid: String(identity.aid), oid: String(identity.cid), type: '1' });
+                            let data;
+                            try {
+                                data = await readMetadata('https://api.bilibili.com/x/v2/dm/view?' + dmParams, false);
+                            } catch (error) {
+                                if (error.message === mismatch) throw error;
+                            }
+                            if (!Array.isArray(data?.subtitle?.subtitles) || data.subtitle.subtitles.length === 0) {
+                                const params = new URLSearchParams({ bvid: identity.bvid, aid: String(identity.aid), cid: String(identity.cid) });
+                                try {
+                                    data = await readMetadata('https://api.bilibili.com/x/player/wbi/v2?' + params, true);
+                                } catch (error) {
+                                    // A valid empty DM configuration is still useful when fallback is unavailable.
+                                    if (!data || error.message === mismatch) throw error;
+                                }
+                            }
+                            const subtitle = data.subtitle || {};
+                            const sourceTracks = Array.isArray(subtitle.subtitles)
+                                ? subtitle.subtitles.slice(0, 16)
+                                : [];
+                            const preferredLanguage = String(subtitle.lan || '');
+                            let trackError = '';
+                            const tracks = await Promise.all(sourceTracks.map(async (item, index) => {
+                                try {
+                                    const url = verifiedUrl(item?.subtitle_url);
+                                    const content = await readJson(url);
+                                    const language = String(item?.lan || '');
+                                    const name = String(item?.lan_doc || language || `字幕 ${index + 1}`);
+                                    const cues = simplifyCues(content?.body);
+                                    if (cues.length === 0) throw new Error(failed);
+                                    return {
+                                        id: String(item?.id_str || item?.id || index),
+                                        lan: language,
+                                        name: name.slice(0, 80),
+                                        ai: Number(item?.type) === 1 || /^ai-/i.test(language) || /AI|自动/.test(name),
+                                        def: preferredLanguage
+                                            ? language === preferredLanguage
+                                            : index === 0,
+                                        cues
+                                    };
+                                } catch (error) {
+                                    if (error.message === mismatch || !trackError) {
+                                        trackError = error.message === mismatch ? mismatch : failed;
+                                    }
+                                    return null;
+                                }
+                            }));
+
+                            post({
+                                tracks: tracks.filter(Boolean),
+                                login: !!data.need_login_subtitle && sourceTracks.length === 0,
+                                error: tracks.some(Boolean) ? '' : trackError
+                            });
+                        })().catch(error => post({ tracks: [], login: false,
+                            error: error.message === mismatch ? mismatch : failed }));
+                })()
+                """;
+
+            await core.ExecuteScriptAsync(script);
+
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(14), cancellationToken);
+            var completedTask = await Task.WhenAny(completion.Task, timeoutTask);
+            if (completedTask != completion.Task)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Failure("字幕加载超时，请重新打开视频重试");
+            }
+
+            var json = await completion.Task;
+            var snapshot = string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<SubtitleSnapshot>(json);
+            return snapshot is not null && snapshot.Bvid == bvid && snapshot.Aid == aid && snapshot.Cid == cid
+                ? snapshot
+                : Failure("字幕与当前视频不匹配，已阻止加载");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return Failure("字幕加载失败，请重新打开视频重试");
+        }
+        finally
+        {
+            core.WebMessageReceived -= OnWebMessageReceived;
         }
     }
 
@@ -722,27 +997,47 @@ public sealed class BiliPlaybackResolver
 
     private static PlaybackManifest WithCommunityData(
         PlaybackManifest manifest,
+        string bvid,
         long aid,
+        long cid,
+        int pageNumber,
+        IReadOnlyList<VideoPart> parts,
         long ownerMid,
         IReadOnlyList<DanmakuComment> danmaku,
+        SubtitleSnapshot subtitles,
         VideoCommentSnapshot comments) =>
         new()
         {
+            Bvid = bvid,
             Aid = aid,
+            Cid = cid,
+            PageNumber = pageNumber,
+            Parts = parts,
             OwnerMid = ownerMid,
             Sources = manifest.Sources,
             AvailableQualities = manifest.AvailableQualities,
             Danmaku = danmaku,
+            Subtitles = subtitles,
             Comments = comments
         };
 
     private static async Task<string?> TryReadPagePlayInfoAsync(
-        Microsoft.Web.WebView2.Core.CoreWebView2 core)
+        Microsoft.Web.WebView2.Core.CoreWebView2 core,
+        VideoContext context)
     {
         try
         {
             var raw = await core.ExecuteScriptAsync(
-                "JSON.stringify(window.__playinfo__ ?? null)");
+                $$"""
+                (() => {
+                    const info = window.__playinfo__;
+                    const data = info?.data ?? info?.result;
+                    // For a multi-P video the fallback must prove ownership with its cid.
+                    // last_play_cid is watch history, not the identity of these media tracks.
+                    return JSON.stringify({{context.Parts.Count}} <= 1 || Number(data?.cid) === {{context.Cid}}
+                        ? info : null);
+                })()
+                """);
             var json = DecodeScriptString(raw);
             return string.Equals(json, "null", StringComparison.OrdinalIgnoreCase) ? null : json;
         }
@@ -1104,6 +1399,8 @@ public sealed class BiliPlaybackResolver
     {
         public long Aid { get; set; }
         public long Cid { get; set; }
+        public int PageNumber { get; set; } = 1;
+        public List<VideoPart> Parts { get; set; } = [];
         public string Bvid { get; set; } = string.Empty;
         public long OwnerMid { get; set; }
         public int ReplyCount { get; set; }

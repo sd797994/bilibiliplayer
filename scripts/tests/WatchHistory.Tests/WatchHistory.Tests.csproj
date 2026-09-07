@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../BiliBiliPlayer/Services/BiliWatchHistoryService.cs" Link="BiliWatchHistoryService.cs" />
+    <Compile Include="../../../BiliBiliPlayer/Models/VideoItem.cs" Link="VideoItem.cs" />
+    <Compile Include="../../../BiliBiliPlayer/Models/WatchHistoryItem.cs" Link="WatchHistoryItem.cs" />
+  </ItemGroup>
+</Project>

@@ -139,4 +139,5 @@ _NCrunch*s
 /WebApi/ExtraConfig.json
 /.playwright-mcp
 /WebApi/ExtraConfig.json
-artifacts
+artifacts/
+share_wechat/

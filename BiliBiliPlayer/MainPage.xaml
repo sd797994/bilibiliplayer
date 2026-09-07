@@ -82,6 +82,7 @@
                            BackgroundColor="Transparent"
                            ReturnType="Search"
                            ClearButtonVisibility="WhileEditing"
+                           TextChanged="OnSearchTextChanged"
                            Completed="OnSearchCompleted"
                            VerticalOptions="Center" />
                 </Grid>
@@ -98,6 +99,8 @@
                 </Border.StrokeShape>
                 <Border.GestureRecognizers>
                     <TapGestureRecognizer Tapped="OnAccountTapped" />
+                    <PointerGestureRecognizer PointerEntered="OnAccountPointerEntered"
+                                              PointerExited="OnAccountPointerExited" />
                 </Border.GestureRecognizers>
                 <Grid ColumnDefinitions="42,Auto,Auto"
                       ColumnSpacing="10">
@@ -350,5 +353,233 @@
                 </Border>
             </Grid>
         </Grid>
+
+        <Border x:Name="WatchHistoryFlyout"
+                Grid.RowSpan="2"
+                ZIndex="50"
+                IsVisible="{Binding IsWatchHistoryOpen}"
+                WidthRequest="410"
+                HeightRequest="510"
+                Margin="0,72,28,0"
+                Padding="0"
+                HorizontalOptions="End"
+                VerticalOptions="Start"
+                BackgroundColor="#F71A1D24"
+                Stroke="#343945"
+                StrokeThickness="1">
+            <Border.Shadow>
+                <Shadow Brush="#B0000000"
+                        Offset="0,12"
+                        Radius="26"
+                        Opacity="0.72" />
+            </Border.Shadow>
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="16" />
+            </Border.StrokeShape>
+            <Border.GestureRecognizers>
+                <PointerGestureRecognizer PointerEntered="OnWatchHistoryPointerEntered"
+                                          PointerExited="OnWatchHistoryPointerExited" />
+            </Border.GestureRecognizers>
+
+            <Grid RowDefinitions="58,*">
+                <Grid Padding="18,0"
+                      ColumnDefinitions="*,Auto"
+                      ColumnSpacing="12">
+                    <VerticalStackLayout Spacing="1"
+                                         VerticalOptions="Center">
+                        <Label Text="观看历史"
+                               TextColor="#F4F5F7"
+                               FontSize="16"
+                               FontAttributes="Bold" />
+                        <Label Text="来自当前登录的 B 站账号"
+                               TextColor="#858B98"
+                               FontSize="10" />
+                    </VerticalStackLayout>
+                    <Border Grid.Column="1"
+                            Padding="9,4"
+                            VerticalOptions="Center"
+                            BackgroundColor="#2A202A"
+                            StrokeThickness="0">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="8" />
+                        </Border.StrokeShape>
+                        <Label Text="滚动加载更多"
+                               TextColor="#FB7299"
+                               FontSize="9"
+                               FontAttributes="Bold" />
+                    </Border>
+                    <BoxView Grid.ColumnSpan="2"
+                             HeightRequest="1"
+                             Color="#2B2F38"
+                             VerticalOptions="End" />
+                </Grid>
+
+                <Grid Grid.Row="1">
+                    <CollectionView x:Name="WatchHistoryCollectionView"
+                                    IsVisible="{Binding ShowWatchHistoryContent}"
+                                    ItemsSource="{Binding WatchHistory}"
+                                    SelectionMode="None"
+                                     ItemsUpdatingScrollMode="KeepScrollOffset"
+                                     Loaded="OnWatchHistoryCollectionLoaded"
+                                     Unloaded="OnWatchHistoryCollectionUnloaded"
+                                     Scrolled="OnWatchHistoryScrolled"
+                                    RemainingItemsThreshold="3"
+                                    RemainingItemsThresholdReachedCommand="{Binding WatchHistoryLoadMoreCommand}"
+                                    VerticalScrollBarVisibility="Default">
+                        <CollectionView.ItemsLayout>
+                            <LinearItemsLayout Orientation="Vertical"
+                                               ItemSpacing="2" />
+                        </CollectionView.ItemsLayout>
+
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="models:WatchHistoryItem">
+                                <Border HeightRequest="104"
+                                        Margin="8,3"
+                                        Padding="10"
+                                        BackgroundColor="Transparent"
+                                        StrokeThickness="0">
+                                    <Border.StrokeShape>
+                                        <RoundRectangle CornerRadius="12" />
+                                    </Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Tapped="OnWatchHistoryItemTapped"
+                                                              CommandParameter="{Binding .}" />
+                                    </Border.GestureRecognizers>
+                                    <Grid ColumnDefinitions="136,*"
+                                          ColumnSpacing="12">
+                                        <Border WidthRequest="136"
+                                                HeightRequest="82"
+                                                Padding="0"
+                                                BackgroundColor="#272B34"
+                                                StrokeThickness="0">
+                                            <Border.StrokeShape>
+                                                <RoundRectangle CornerRadius="9" />
+                                            </Border.StrokeShape>
+                                            <Grid>
+                                                <Image Source="{Binding CoverUrl}"
+                                                       Aspect="AspectFill"
+                                                       BackgroundColor="#272B34" />
+                                                <Border Margin="0,0,6,6"
+                                                        Padding="5,2"
+                                                        HorizontalOptions="End"
+                                                        VerticalOptions="End"
+                                                        BackgroundColor="#B8000000"
+                                                        StrokeThickness="0">
+                                                    <Border.StrokeShape>
+                                                        <RoundRectangle CornerRadius="5" />
+                                                    </Border.StrokeShape>
+                                                    <Label Text="{Binding DurationText}"
+                                                           TextColor="White"
+                                                           FontSize="9" />
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+
+                                        <Grid Grid.Column="1"
+                                              RowDefinitions="*,Auto,Auto"
+                                              RowSpacing="3">
+                                            <Label Text="{Binding Title}"
+                                                   TextColor="#ECEEF2"
+                                                   FontSize="12"
+                                                   FontAttributes="Bold"
+                                                   LineBreakMode="TailTruncation"
+                                                   MaxLines="2" />
+                                            <Label Grid.Row="1"
+                                                   Text="{Binding AuthorName, StringFormat='UP  {0}'}"
+                                                   TextColor="#858B98"
+                                                   FontSize="10"
+                                                   LineBreakMode="TailTruncation"
+                                                   MaxLines="1" />
+                                            <Grid Grid.Row="2"
+                                                  ColumnDefinitions="*,Auto"
+                                                  ColumnSpacing="8">
+                                                <Label Text="{Binding ViewedAtText}"
+                                                       TextColor="#6F7582"
+                                                       FontSize="9" />
+                                                <Label Grid.Column="1"
+                                                       Text="{Binding ProgressText}"
+                                                       TextColor="#FB7299"
+                                                       FontSize="9" />
+                                            </Grid>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+
+                        <CollectionView.Footer>
+                            <Grid HeightRequest="54"
+                                  IsVisible="{Binding ShowWatchHistoryFooter}">
+                                <HorizontalStackLayout Spacing="8"
+                                                       HorizontalOptions="Center"
+                                                       VerticalOptions="Center">
+                                    <ActivityIndicator IsVisible="{Binding IsWatchHistoryLoadingMore}"
+                                                       IsRunning="{Binding IsWatchHistoryLoadingMore}"
+                                                       Color="#FB7299"
+                                                       WidthRequest="16"
+                                                       HeightRequest="16" />
+                                    <Button Text="{Binding WatchHistoryFooterText}"
+                                            Command="{Binding WatchHistoryLoadMoreCommand}"
+                                            Padding="4,0"
+                                            MinimumHeightRequest="30"
+                                            BackgroundColor="Transparent"
+                                            TextColor="#747A87"
+                                            FontSize="10" />
+                                </HorizontalStackLayout>
+                            </Grid>
+                        </CollectionView.Footer>
+                    </CollectionView>
+
+                    <VerticalStackLayout IsVisible="{Binding IsWatchHistoryBusy}"
+                                         Spacing="12"
+                                         HorizontalOptions="Center"
+                                         VerticalOptions="Center">
+                        <ActivityIndicator IsRunning="{Binding IsWatchHistoryBusy}"
+                                           Color="#FB7299"
+                                           WidthRequest="28"
+                                           HeightRequest="28" />
+                        <Label Text="正在同步账号历史…"
+                               TextColor="#858B98"
+                               FontSize="11" />
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout IsVisible="{Binding ShowWatchHistoryEmpty}"
+                                         Spacing="7"
+                                         HorizontalOptions="Center"
+                                         VerticalOptions="Center">
+                        <Label Text="◷"
+                               TextColor="#59606D"
+                               FontSize="34"
+                               HorizontalTextAlignment="Center" />
+                        <Label Text="暂时没有视频观看历史"
+                               TextColor="#A3A8B2"
+                               FontSize="12" />
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout IsVisible="{Binding ShowWatchHistoryError}"
+                                         Spacing="10"
+                                         Margin="40,0"
+                                         HorizontalOptions="Center"
+                                         VerticalOptions="Center">
+                        <Label Text="历史记录加载失败"
+                               TextColor="#ECEEF2"
+                               FontSize="13"
+                               FontAttributes="Bold"
+                               HorizontalTextAlignment="Center" />
+                        <Label Text="{Binding WatchHistoryErrorMessage}"
+                               TextColor="#858B98"
+                               FontSize="10"
+                               HorizontalTextAlignment="Center" />
+                        <Button Text="重新加载"
+                                Command="{Binding WatchHistoryRetryCommand}"
+                                Padding="16,7"
+                                BackgroundColor="#FB7299"
+                                TextColor="White"
+                                FontSize="10"
+                                CornerRadius="9" />
+                    </VerticalStackLayout>
+                </Grid>
+            </Grid>
+        </Border>
     </Grid>
 </ContentPage>

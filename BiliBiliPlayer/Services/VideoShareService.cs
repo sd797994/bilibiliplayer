@@ -12,7 +12,7 @@ public static class VideoShareService
 {
     private const string SendCardEndpoint = "http://127.0.0.1:30002/send_xml_with_local_thumb";
     private const string SendTextEndpoint = "http://127.0.0.1:30001/SendTextMsg";
-    private const string TargetRoomWxid = "2097562635@chatroom";
+    private const string RecentContactsEndpoint = "http://127.0.0.1:30002/share/recent_contacts";
     private const string UploadWxid = "filehelper";
     private const int BridgeTimeoutSeconds = 30;
     private const long MaximumCoverBytes = 20 * 1024 * 1024;
@@ -31,12 +31,92 @@ public static class VideoShareService
         return $"https://www.bilibili.com/video/{bvid}/";
     }
 
+    public static async Task<IReadOnlyList<WeChatShareContact>> GetRecentContactsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await WeChatHttpClient.GetAsync(
+                RecentContactsEndpoint,
+                cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var document = JsonDocument.Parse(responseBody);
+            var root = document.RootElement;
+            var ret = root.TryGetProperty("ret", out var retElement) &&
+                      retElement.TryGetInt32(out var retValue)
+                ? retValue
+                : -1;
+            if (!response.IsSuccessStatusCode || ret != 0)
+            {
+                var message = root.TryGetProperty("msg", out var messageElement) &&
+                              messageElement.ValueKind == JsonValueKind.String
+                    ? messageElement.GetString()
+                    : null;
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(message)
+                        ? $"联系人服务返回 HTTP {(int)response.StatusCode}，ret={ret}。"
+                        : message);
+            }
+
+            if (!root.TryGetProperty("data", out var dataElement) ||
+                dataElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<WeChatShareContact>();
+            }
+
+            var contacts = new List<WeChatShareContact>();
+            foreach (var item in dataElement.EnumerateArray())
+            {
+                var wxid = ReadJsonString(item, "wxid");
+                var displayName = ReadJsonString(item, "display_name");
+                if (string.IsNullOrWhiteSpace(wxid) || string.IsNullOrWhiteSpace(displayName))
+                {
+                    continue;
+                }
+
+                var avatarUrl = ReadJsonString(item, "avatar_url");
+                var isGroup = item.TryGetProperty("is_group", out var groupElement) &&
+                              groupElement.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+                              groupElement.GetBoolean();
+                var lastTimestamp = item.TryGetProperty("last_timestamp", out var timestampElement) &&
+                                    timestampElement.TryGetInt64(out var timestamp)
+                    ? timestamp
+                    : 0;
+                contacts.Add(new WeChatShareContact(
+                    wxid.Trim(),
+                    displayName.Trim(),
+                    avatarUrl,
+                    isGroup,
+                    lastTimestamp));
+            }
+            return contacts;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException("读取微信最近联系人超时。");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InvalidOperationException(
+                "无法连接微信联系人服务，请确认微信及本地 Hook v5 已启动。",
+                ex);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("微信联系人服务返回了无法识别的数据。", ex);
+        }
+    }
+
     public static async Task<WeChatShareResult> SendToWeChatAsync(
         VideoItem video,
+        WeChatShareContact contact,
         string? recommendation,
         CancellationToken cancellationToken = default)
     {
-        var cardResult = await SendCardToWeChatAsync(video, cancellationToken);
+        ArgumentNullException.ThrowIfNull(contact);
+        ValidateTargetWxid(contact.Wxid);
+
+        var cardResult = await SendCardToWeChatAsync(video, contact.Wxid, cancellationToken);
         if (!cardResult.Success)
         {
             return cardResult;
@@ -45,19 +125,21 @@ public static class VideoShareService
         var message = recommendation?.Trim();
         if (string.IsNullOrEmpty(message))
         {
-            return cardResult;
+            return WeChatShareResult.Ok($"卡片已发送给 {contact.DisplayName}。");
         }
 
-        var textResult = await SendRecommendationAsync(message, cancellationToken);
+        var textResult = await SendRecommendationAsync(contact.Wxid, message, cancellationToken);
         return textResult.Success
-            ? WeChatShareResult.Ok("卡片和推荐语已发送到微信群。")
+            ? WeChatShareResult.Ok($"卡片和推荐语已发送给 {contact.DisplayName}。")
             : WeChatShareResult.Fail($"卡片已发送，但推荐语发送失败：{textResult.Message}");
     }
 
     public static async Task<WeChatShareResult> SendCardToWeChatAsync(
         VideoItem video,
+        string targetWxid,
         CancellationToken cancellationToken = default)
     {
+        ValidateTargetWxid(targetWxid);
         var title = string.IsNullOrWhiteSpace(video.Title)
             ? video.Bvid.Trim()
             : video.Title.Trim();
@@ -86,7 +168,7 @@ public static class VideoShareService
 
             var payload = new
             {
-                wxid = TargetRoomWxid,
+                wxid = targetWxid,
                 title,
                 description = $"UP主：{ownerName}\n播放：{video.ViewCountText}",
                 url = GetVideoUrl(video),
@@ -118,6 +200,7 @@ public static class VideoShareService
     }
 
     private static async Task<WeChatShareResult> SendRecommendationAsync(
+        string targetWxid,
         string message,
         CancellationToken cancellationToken)
     {
@@ -125,7 +208,7 @@ public static class VideoShareService
         {
             var payload = new
             {
-                wxidorgid = TargetRoomWxid,
+                wxidorgid = targetWxid,
                 msg = message
             };
 
@@ -320,6 +403,23 @@ public static class VideoShareService
         }
     }
 
+    private static string ReadJsonString(JsonElement value, string propertyName)
+    {
+        return value.TryGetProperty(propertyName, out var property) &&
+               property.ValueKind == JsonValueKind.String
+            ? property.GetString() ?? string.Empty
+            : string.Empty;
+    }
+
+    private static void ValidateTargetWxid(string targetWxid)
+    {
+        if (string.IsNullOrWhiteSpace(targetWxid) || targetWxid.Length > 256 ||
+            targetWxid.Any(char.IsControl))
+        {
+            throw new ArgumentException("微信联系人标识无效。", nameof(targetWxid));
+        }
+    }
+
     private static string GetImageExtension(string? mediaType) => mediaType?.ToLowerInvariant() switch
     {
         "image/png" => ".png",
@@ -348,7 +448,21 @@ public static class VideoShareService
 
 public sealed record WeChatShareResult(bool Success, string Message)
 {
-    public static WeChatShareResult Ok(string message = "已发送到微信群。") => new(true, message);
+    public static WeChatShareResult Ok(string message = "已发送到微信。") => new(true, message);
 
     public static WeChatShareResult Fail(string message) => new(false, message);
+}
+
+public sealed record WeChatShareContact(
+    string Wxid,
+    string DisplayName,
+    string AvatarUrl,
+    bool IsGroup,
+    long LastTimestamp)
+{
+    public string AvatarText => string.IsNullOrWhiteSpace(DisplayName)
+        ? "微"
+        : DisplayName[..1];
+
+    public string KindText => IsGroup ? "群聊" : "联系人";
 }

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../BiliBiliPlayer/Services/PlaybackProgressStore.cs" Link="PlaybackProgressStore.cs" />
+    <Compile Include="../../../BiliBiliPlayer/Services/PlayerScriptExecutor.cs" Link="PlayerScriptExecutor.cs" />
+  </ItemGroup>
+</Project>
