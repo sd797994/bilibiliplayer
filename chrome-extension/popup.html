@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>B站分享到微信</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="panel">
+    <header>
+      <div>
+        <h1>分享到微信</h1>
+        <p>发送标题、UP/播放量、封面和原始链接</p>
+      </div>
+      <button id="reloadButton" class="ghost">刷新</button>
+    </header>
+
+    <section class="source-row">
+      <input id="videoUrlInput" placeholder="当前 B站视频页，或粘贴视频链接 / BV号" />
+      <button id="loadButton">读取</button>
+    </section>
+
+    <section id="videoCard" class="video-card hidden">
+      <div class="cover-wrap">
+        <img id="coverImage" alt="视频封面" />
+        <span id="durationBadge"></span>
+      </div>
+      <div class="video-info">
+        <strong id="videoTitle"></strong>
+        <span id="videoMeta"></span>
+      </div>
+    </section>
+
+    <section class="contacts-head">
+      <strong>最近联系人</strong>
+      <span id="contactsStatus">未读取</span>
+    </section>
+    <div id="contacts" class="contacts"></div>
+
+    <textarea id="recommendation" maxlength="500" rows="3" placeholder="推荐语（可选），将在卡片成功后发送"></textarea>
+
+    <div id="status" class="status">正在读取当前页面…</div>
+    <button id="sendButton" class="send" disabled>发送给所选联系人</button>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
