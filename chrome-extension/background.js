@@ -114,34 +114,32 @@ async function downloadCover(coverUrl, bvid) {
   const url = normalizeHttps(coverUrl || '');
   if (!/^https?:\/\//i.test(url)) throw new Error('当前视频没有有效的封面地址。');
 
-  const response = await fetch(url, {
-    headers: {
-      'Accept': 'image/*',
-      'Referer': `https://www.bilibili.com/video/${bvid}/`
-    }
-  });
-  if (!response.ok) throw new Error(`下载 B 站封面失败：HTTP ${response.status}。`);
-  const length = Number(response.headers.get('content-length') || 0);
-  if (length > MAX_COVER_BYTES) throw new Error('封面文件过大。');
-  const buffer = await response.arrayBuffer();
-  if (!buffer.byteLength || buffer.byteLength > MAX_COVER_BYTES) throw new Error('封面文件大小无效。');
+  const extension = imageExtensionFromUrl(url);
+  let id;
+  try {
+    id = await chrome.downloads.download({
+      url,
+      filename: `bilibili-wechat-share/${bvid}-${Date.now()}${extension}`,
+      conflictAction: 'uniquify',
+      saveAs: false
+    });
+  } catch (error) {
+    throw new Error(`下载 B 站封面失败：${error?.message || error}`);
+  }
 
-  const type = response.headers.get('content-type') || 'image/jpeg';
-  const ext = imageExtension(type);
-  const dataUrl = `data:${type};base64,${arrayBufferToBase64(buffer)}`;
-  const id = await chrome.downloads.download({
-    url: dataUrl,
-    filename: `bilibili-wechat-share/${bvid}-${Date.now()}${ext}`,
-    conflictAction: 'uniquify',
-    saveAs: false
-  });
   const item = await waitForDownload(id);
+  const size = item.fileSize > 0 ? item.fileSize : item.totalBytes;
+  if (size <= 0 || size > MAX_COVER_BYTES) {
+    try { await chrome.downloads.removeFile(id); } catch {}
+    try { await chrome.downloads.erase({ id }); } catch {}
+    throw new Error('封面文件大小无效。');
+  }
   if (!item.filename) throw new Error('Chrome 未返回封面的本地路径。');
   return { id, filename: item.filename };
 }
 
 async function waitForDownload(id) {
-  for (let i = 0; i < 120; i += 1) {
+  for (let i = 0; i < 150; i += 1) {
     const items = await chrome.downloads.search({ id });
     const item = items[0];
     if (!item) throw new Error('找不到临时封面下载任务。');
@@ -211,20 +209,12 @@ function formatDuration(seconds) {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function imageExtension(type) {
-  const lower = String(type).toLowerCase();
-  if (lower.includes('png')) return '.png';
-  if (lower.includes('webp')) return '.webp';
-  if (lower.includes('gif')) return '.gif';
+function imageExtensionFromUrl(url) {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    if (path.endsWith('.png')) return '.png';
+    if (path.endsWith('.webp')) return '.webp';
+    if (path.endsWith('.gif')) return '.gif';
+  } catch {}
   return '.jpg';
-}
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunk = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
-  }
-  return btoa(binary);
 }
